@@ -1,0 +1,1 @@
+Save your static resources (like dictionary files, etc) in this directory. See https://docs.djangoproject.com/en/1.10/howto/static-files/ for more details
