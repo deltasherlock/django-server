@@ -26,7 +26,7 @@ def api_root(request, format=None):
     Home page of the API
     """
     return Response({
-        'admin': reverse('admin', request=request, format=format),
+        'admin': reverse('admin:index', request=request, format=format),
         'queueitem-list': reverse('queueitem-list', request=request, format=format),
         'eventlabel-list': reverse('eventlabel-list', request=request, format=format),
         'fingerprint-submit': reverse('fingerprint-submit', request=request, format=format),
