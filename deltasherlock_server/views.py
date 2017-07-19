@@ -58,6 +58,7 @@ class FingerprintSubmit(APIView):
             rq_job = q.enqueue('deltasherlock.server.worker.process_fingerprint',
                                request.data['fingerprint'],
                                request.data['endpoint_url'],
+                               request.META['REMOTE_ADDR'],
                                request.data['parameters'],
                                django_params)
         except:
