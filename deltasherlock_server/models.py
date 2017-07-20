@@ -60,7 +60,7 @@ class QueueItem(models.Model):
         self.client_ip = request.META['REMOTE_ADDR']
         self.endpoint_url = request.data['endpoint_url']
         self.parameters = request.data['parameters']
-        self.request_body = "[disabled]"
+        self.request_body = request.stream.decode("utf-8")
         self.rq_id = rq_id
         self.save()
         return self.id
