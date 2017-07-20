@@ -48,7 +48,7 @@ class QueueItem(models.Model):
     result_labels = models.ManyToManyField(
         EventLabel, verbose_name="Predicted Labels", blank=True)
 
-    def from_request(self, request, rq_id: str) -> int:
+    def from_request(self, request, rq_id: str, request_body: str = None) -> int:
         """
         Extract data from a DRF Request object and commit to database
 
@@ -56,12 +56,12 @@ class QueueItem(models.Model):
         previously successfully submitted to RQ
         :param rq_id: the ID string assigned by RQ
         :return: the QueueItem's ID
-        """
-        self.request_body = request.body.decode("utf-8")
+        """    
         self.client_ip = request.META['REMOTE_ADDR']
         self.endpoint_url = request.data['endpoint_url']
         self.parameters = request.data['parameters']
         self.rq_id = rq_id
+        self.request_body = request_body
         self.save()
         return self.id
 
