@@ -57,10 +57,10 @@ class QueueItem(models.Model):
         :param rq_id: the ID string assigned by RQ
         :return: the QueueItem's ID
         """
+        self.request_body = request.body.decode("utf-8")
         self.client_ip = request.META['REMOTE_ADDR']
         self.endpoint_url = request.data['endpoint_url']
         self.parameters = request.data['parameters']
-        self.request_body = request.body.decode("utf-8")
         self.rq_id = rq_id
         self.save()
         return self.id
