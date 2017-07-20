@@ -5,6 +5,7 @@ dispatcher). Remember that these views are unreachable unless you route them
 within "urls.py"
 """
 import os
+import urllib
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -48,8 +49,14 @@ class FingerprintSubmit(APIView):
         except:
             return Response("Could not reach Redis", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        # Gather some information about the request
+        request_content = urllib.parse.unquote(request.body.decode("utf-8"))
+        request_headers = ""
+        for header_name, header_value in request.META.iteritems():
+            request_headers += header_name + ": " + header_value + "\n"
+        full_request = request_headers + "\n" + request_content
+
         # Then submit the job to RQ
-        request_body = request.body.decode("utf-8")
         rq_job = None
         try:
             django_params = {
@@ -66,7 +73,7 @@ class FingerprintSubmit(APIView):
             return Response("Rejected by job queue. Check submission data and try again.", status=status.HTTP_400_BAD_REQUEST)
 
         # Finally, create a record of the request in the QueueItem database
-        queue_id = models.QueueItem().from_request(request=request, rq_id=rq_job.id, request_body=request_body)
+        queue_id = models.QueueItem().from_request(request=request, rq_id=rq_job.id, request_body=full_request)
 
         return Response(queue_id, status=status.HTTP_202_ACCEPTED)
 

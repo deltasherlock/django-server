@@ -43,6 +43,7 @@ class QueueItem(models.Model):
     submission_time = models.DateTimeField(auto_now_add=True)
     endpoint_url = models.URLField()
     parameters = models.CharField(max_length=255, blank=True)
+    error_message = models.CharField(max_length=511, blank=True)
     request_body = models.TextField(verbose_name="Full HTTP Request Text")
     rq_id = models.CharField(max_length=50, verbose_name="RQ Job ID")
     result_labels = models.ManyToManyField(
@@ -56,7 +57,7 @@ class QueueItem(models.Model):
         previously successfully submitted to RQ
         :param rq_id: the ID string assigned by RQ
         :return: the QueueItem's ID
-        """    
+        """
         self.client_ip = request.META['REMOTE_ADDR']
         self.endpoint_url = request.data['endpoint_url']
         self.parameters = request.data['parameters']
@@ -65,14 +66,29 @@ class QueueItem(models.Model):
         self.save()
         return self.id
 
-    def rq_complete(self, labels: list):
+    def rq_running(self):
+        """
+        Called when an RQ worker dials into Django for the first time to let us
+        know that its running
+        """
+        self.status = 'RN'
+        self.save()
+
+    def rq_complete(self, labels: list = None, error: str = None):
         """
         Called when an RQ worker that's been "dialed in" to Django has completed
         this QueueItem.
 
         :param labels: the list of predicted labels
+        :param error: the error message to be logged if this job failed. If this
+        is None, we assume the job was successful
         """
-        self.status = 'FN'
+        if error is None:
+            self.status = 'FN'
+        else:
+            self.status = 'FL'
+            self.error_message = str(error)
+
         for label in labels:
             # See if there's already an EventLabel in the DB for that
             label_qset = EventLabel.objects.filter(name=label)
@@ -89,6 +105,7 @@ class QueueItem(models.Model):
             self.result_labels.add(event_label)
 
         self.save()
+
 
     def __str__(self):
         return str(self.status) + ": " + str(self.id) + " from " + str(self.client_ip) + " at " + str(self.submission_time)
