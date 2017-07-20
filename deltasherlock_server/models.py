@@ -7,6 +7,7 @@ import uuid
 import pytz
 from datetime import datetime
 from django.db import models
+from simple_history.models import HistoricalRecords
 from deltasherlock.common.io import DSEncoder, DSDecoder
 from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
@@ -17,6 +18,7 @@ class EventLabel(models.Model):
     Used to hold "event" (usually an app installation) labels
     """
     name = models.CharField(max_length=255, primary_key=True)
+    history = HistoricalRecords()
 
     def __str__(self):
         return self.name
@@ -48,6 +50,7 @@ class QueueItem(models.Model):
     rq_id = models.CharField(max_length=50, verbose_name="RQ Job ID")
     result_labels = models.ManyToManyField(
         EventLabel, verbose_name="Predicted Labels", blank=True)
+    history = HistoricalRecords()
 
     def from_request(self, request, rq_id: str, request_body: str = None) -> int:
         """
@@ -106,7 +109,6 @@ class QueueItem(models.Model):
 
         self.save()
 
-
     def __str__(self):
         return str(self.status) + ": " + str(self.id) + " from " + str(self.client_ip) + " at " + str(self.submission_time)
 
@@ -123,6 +125,7 @@ class DeltaSherlockWrapper(models.Model):
     labels = models.ManyToManyField(EventLabel, blank=True)
     predicted_quantity = models.IntegerField()
     json_data = models.TextField()
+    history = HistoricalRecords()
 
     def wrap(self, object_to_wrap):
         """
