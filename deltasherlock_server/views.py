@@ -52,7 +52,7 @@ class FingerprintSubmit(APIView):
         # Gather some information about the request
         request_content = urllib.parse.unquote(request.body.decode("utf-8"))
         request_headers = ""
-        for header_name, header_value in request.META.iteritems():
+        for header_name, header_value in request.META.items():
             request_headers += header_name + ": " + header_value + "\n"
         full_request = request_headers + "\n" + request_content
 
