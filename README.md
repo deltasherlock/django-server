@@ -7,7 +7,7 @@ This repository contains the DeltaSherlock **[Django](https://www.djangoproject.
 ## Installation
 1. Follow the installation instructions for the utility-package if you haven't already
 2. Install the Redis (queuing server) `sudo apt install redis-server`
-3. Install Django + dependencies `sudo pip3 install --upgrade django djangorestframework markdown redis rq pytz`
+3. Install Django + dependencies `sudo pip3 install --upgrade django djangorestframework django-simple-history markdown redis rq pytz `
 4. Clone this repo somewhere easy, like to your home directory: git clone https://github.com/deltasherlock/django-server.git
 5. `cd` into the repo, prepare the databases, create an admin account, and launch the web server
 ```bash

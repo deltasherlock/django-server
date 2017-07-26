@@ -7,7 +7,9 @@ import uuid
 import pytz
 from datetime import datetime
 from django.db import models
+from django.contrib import admin
 from simple_history.models import HistoricalRecords
+from simple_history.admin import SimpleHistoryAdmin
 from deltasherlock.common.io import DSEncoder, DSDecoder
 from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
@@ -110,7 +112,14 @@ class QueueItem(models.Model):
         self.save()
 
     def __str__(self):
-        return str(self.status) + ": " + str(self.id) + " from " + str(self.client_ip) + " at " + str(self.submission_time)
+        return str(self.status) + ": " + str(self.submission_time) + ", " + str(self.client_ip) + " sent " + str(self.id)
+
+    class Meta:
+        ordering = ['-submission_time']
+
+
+class QueueItemAdmin(SimpleHistoryAdmin):
+    list_display = ('status', 'id', 'client_ip', 'submission_time')
 
 
 class DeltaSherlockWrapper(models.Model):
@@ -125,7 +134,8 @@ class DeltaSherlockWrapper(models.Model):
     labels = models.ManyToManyField(EventLabel, blank=True)
     predicted_quantity = models.IntegerField()
     json_data = models.TextField()
-    history = HistoricalRecords()
+    history = HistoricalRecords(inherit=True)
+    last_updated = models.DateTimeField(auto_now=True)
 
     def wrap(self, object_to_wrap):
         """
@@ -168,6 +178,17 @@ class DeltaSherlockWrapper(models.Model):
         obj.db_id = self.id
         return obj
 
+    def get_labels(self):
+        """
+        Souped-up getter method to get a string containing all the EventLabels
+        this wrapper is attached to. Useful for admin interface
+        """
+        output = ''
+        for event_label in self.labels.all():
+            output += str(event_label.name) + ", "
+        return output
+    get_labels.short_description = "Event Labels"
+
     class Meta:
         abstract = True
 
@@ -188,7 +209,10 @@ class ChangesetWrapper(DeltaSherlockWrapper):
         super().wrap(object_to_wrap)
 
     def __str__(self):
-        return "CS" + str(self.id) + " labeled " + str(self.labels) + " (P.Qty: " + str(self.predicted_quantity) + ", CT: " + str(self.close_time) + ")"
+        return "CS" + str(self.id) + " labeled " + str(self.get_labels()) + " (P.Qty: " + str(self.predicted_quantity) + ", CT: " + str(self.close_time) + ")"
+
+class ChangesetWrapperAdmin(SimpleHistoryAdmin):
+    list_display = ('id', 'get_labels', 'predicted_quantity', 'last_updated')
 
 
 class FingerprintWrapper(DeltaSherlockWrapper):

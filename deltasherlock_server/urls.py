@@ -23,7 +23,7 @@ urlpatterns += [
         name="fingerprint-submit"),
     url(r'^fingerprint/rebuild/$', views.RebuildFingerprints.as_view(),
         name="fingerprint-rebuild"),
-    url(r'^admin/', admin.site.urls, name="admin"),
+    url(r'^dbadmin/', admin.site.urls, name="dbadmin"),
 ]
 
 urlpatterns = format_suffix_patterns(urlpatterns)

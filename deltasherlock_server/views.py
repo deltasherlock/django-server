@@ -27,7 +27,7 @@ def api_root(request, format=None):
     Home page of the API
     """
     return Response({
-        'admin': reverse('admin:index', request=request, format=format),
+        'dbadmin': reverse('admin:index', request=request, format=format),
         'queueitem-list': reverse('queueitem-list', request=request, format=format),
         'eventlabel-list': reverse('eventlabel-list', request=request, format=format),
         'fingerprint-submit': reverse('fingerprint-submit', request=request, format=format),
@@ -50,7 +50,11 @@ class FingerprintSubmit(APIView):
             return Response("Could not reach Redis", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Gather some information about the request
-        request_content = urllib.parse.unquote(request.body.decode("utf-8"))
+        try:
+            # This throws a RawPostDataException if submitted via the DRF webUI
+            request_content = urllib.parse.unquote(request.body.decode("utf-8"))
+        except:
+            request_content = "[request payload unavailable when submitted via DRF webUI]"
         request_headers = ""
         for header_name, header_value in request.META.items():
             if header_name.startswith("HTTP_") or header_name.startswith("REMOTE_") or header_name == "CONTENT_TYPE" or header_name == "CONTENT_LENGTH":
