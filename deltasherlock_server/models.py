@@ -20,6 +20,8 @@ class EventLabel(models.Model):
     Used to hold "event" (usually an app installation) labels
     """
     name = models.CharField(max_length=255, primary_key=True)
+    install_script = models.TextField()
+    uninstall_script = models.TextField()
     history = HistoricalRecords()
 
     def __str__(self):
@@ -38,7 +40,7 @@ class QueueItem(models.Model):
         ('FL', 'Failed'),
     )
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(
         max_length=2, choices=STATUS_CHOICES, default='PN')
     last_updated = models.DateTimeField(auto_now=True)
@@ -211,6 +213,7 @@ class ChangesetWrapper(DeltaSherlockWrapper):
     def __str__(self):
         return "CS" + str(self.id) + " labeled " + str(self.get_labels()) + " (P.Qty: " + str(self.predicted_quantity) + ", CT: " + str(self.close_time) + ")"
 
+
 class ChangesetWrapperAdmin(SimpleHistoryAdmin):
     list_display = ('id', 'get_labels', 'predicted_quantity', 'last_updated')
 
@@ -259,3 +262,57 @@ class FingerprintWrapper(DeltaSherlockWrapper):
 
     def __str__(self):
         return "FP" + str(self.id) + " labeled " + str(self.labels) + " (P.Qty: " + str(self.predicted_quantity) + ", Method: " + str(self.method) + ") originating from CS" + str(self.origin_changeset_id)
+
+
+class Swarm(models.Model):
+    name = models.CharField(max_length=255)
+    date_created = models.DateTimeField(auto_now_add=True)
+    history = HistoricalRecords()
+
+
+class SwarmMember(models.Model):
+    STATUS_CHOICES = (
+        ('PC', 'Pending Creation'),
+        ('CR', 'Creating')
+        ('RN', 'Running'),  # Reaches this state after instance phones in
+        ('TM', 'Terminated'),
+        ('ER', 'Error'),
+    )
+    openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance ID")
+    status = models.CharField(
+        max_length=2, choices=STATUS_CHOICES, default='PC')
+    hostname = models.CharField(max_length=255)
+    ip = models.GenericIPAddressField(blank=True, null=True)
+    image_name = models.CharField(max_length=255)
+    flavor = models.CharField(max_length=255)
+    swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
+    configuration = models.TextField(blank=True)
+
+    def start():
+        """
+        Instructs OpenStack to create the new instance
+        """
+        if self.status != 'PC':
+            # Throw an err since the instance is already Running
+            pass
+        else:
+            # Use OpenStack Compute API to create instance
+            pass
+
+    def reboot():
+        if self.status != 'RN':
+            # Throw an err since only running instances can be rebooted
+            pass
+        else:
+            # Use OpenStack Compute API to reboot instance
+            pass
+
+
+class SwarmMemberLog(models.Model):
+    member = models.ForeignKey(SwarmMember, null=True, on_delete=models.SET_NULL)
+    start_time = models.DateTimeField(auto_now_add=True)
+    last_updated = models.DateTimeField(auto_now=True)
+    log = models.TextField(blank=True)
+    resulting_changeset = models.ForeignKey(
+        ChangesetWrapper, null=True, blank=True, on_delete=models.SET_NULL)
+    history = HistoricalRecords()
