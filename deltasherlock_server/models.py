@@ -5,14 +5,25 @@ manage.py migrate" after making any significant changes here.
 """
 import uuid
 import pytz
+from copy import copy
 from datetime import datetime
+from novaclient import client
 from django.db import models
 from django.contrib import admin
 from simple_history.models import HistoricalRecords
 from simple_history.admin import SimpleHistoryAdmin
-from deltasherlock.common.io import DSEncoder, DSDecoder
+from deltasherlock.common.io import DSEncoder, DSDecoder, uid
 from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
+
+OPENSTACK_VERSION = "2"
+OPENSTACK_USERNAME = "abyrne19"
+OPENSTACK_PASSWORD = "y2gsSNguCQ0POoWw"
+OPENSTACK_PROJID = "e363bb31c52640e59a840bc8504eddb4"
+OPENSTACK_AUTHURL = "https://keystone-kaizen.massopen.cloud:5000/v2.0"
+OPENSTACK_KEYPAIR = "swarm_shared"
+OPENSTACK_AVALZONE = "nova"
+OPENSTACK_SECGRPS = ['default']
 
 
 class EventLabel(models.Model):
@@ -26,6 +37,11 @@ class EventLabel(models.Model):
 
     def __str__(self):
         return self.name
+
+
+@admin.register(EventLabel)
+class EventLabelAdmin(SimpleHistoryAdmin):
+    list_display = ['name']
 
 
 class QueueItem(models.Model):
@@ -120,6 +136,7 @@ class QueueItem(models.Model):
         ordering = ['-submission_time']
 
 
+@admin.register(QueueItem)
 class QueueItemAdmin(SimpleHistoryAdmin):
     list_display = ('status', 'id', 'client_ip', 'submission_time')
 
@@ -214,6 +231,7 @@ class ChangesetWrapper(DeltaSherlockWrapper):
         return "CS" + str(self.id) + " labeled " + str(self.get_labels()) + " (P.Qty: " + str(self.predicted_quantity) + ", CT: " + str(self.close_time) + ")"
 
 
+@admin.register(ChangesetWrapper)
 class ChangesetWrapperAdmin(SimpleHistoryAdmin):
     list_display = ('id', 'get_labels', 'predicted_quantity', 'last_updated')
 
@@ -264,48 +282,265 @@ class FingerprintWrapper(DeltaSherlockWrapper):
         return "FP" + str(self.id) + " labeled " + str(self.labels) + " (P.Qty: " + str(self.predicted_quantity) + ", Method: " + str(self.method) + ") originating from CS" + str(self.origin_changeset_id)
 
 
+@admin.register(FingerprintWrapper)
+class FingerprintWrapperAdmin(SimpleHistoryAdmin):
+    list_display = ('id', 'get_labels', 'method', 'last_updated')
+
+
 class Swarm(models.Model):
     name = models.CharField(max_length=255)
     date_created = models.DateTimeField(auto_now_add=True)
     history = HistoricalRecords()
 
+    def __str__(self):
+        return self.name
+
+    def generate_members(self, quantity, member_model):
+        """
+        Generate a number of SwarmMembers based on a supplied model SwarmMember.
+        The generated members will be carbon copies of the model, except a unique
+        identifier will be appended to the hostname, and some fields (like
+        openstack_id, status, and ip) will be left blank/at their default, even
+        if they are populated in the model. The resulting SwarmMembers will be in
+        the "Pending Creation" state and part of this Swarm.
+
+        :param quantity: a positive integer indicating how many SwarmMembers should
+        be generated
+        :param member_model: a SwarmMember that will server as the "model" for
+        the generated SwarmMembers
+        """
+
+        for i in range(quantity):
+            # Grab a fresh copy of the member_model
+            new_member = copy(member_model)
+
+            # Set the primary_key to None, which effectively makes a db copy
+            new_member.pk = None
+            new_member.save()
+
+            # Now set some fields
+            new_member.openstack_id = None
+            new_member.status = 'PC'
+            new_member.hostname += '-' + uid(size=4)
+            new_member.ip = None
+
+            new_member.swarm = self
+
+            new_member.save()
+
+    def create_pending(self):
+        """
+        Runs the .create() method of all SwarmMembers in the Swarm that are in
+        the 'Pending Creation' state
+        """
+        for member in SwarmMember.objects.filter(swarm=self, status='PC'):
+            member.create()
+
+    def terminate_running(self):
+        """
+        Runs the .terminate() method of all SwarmMembers in the Swarm that are in
+        the 'Running' state
+        """
+        for member in SwarmMember.objects.filter(swarm=self, status='RN'):
+            member.terminate()
+
+    def terminate_all(self):
+        """
+        Runs the .terminate() method of all SwarmMembers in the Swarm that are
+        not already terminated or pending creation
+        """
+        for member in SwarmMember.objects.filter(swarm=self).exclude(status__in=['TM', 'PC']):
+            member.terminate()
+
+    def get_num_members(self):
+        return self.swarmmember_set.count()
+    get_num_members.short_description = "Total Members"
+
+    def get_num_pending(self):
+        return self.swarmmember_set.filter(status='PC').count()
+    get_num_pending.short_description = "Pending"
+
+    def get_num_running(self):
+        return self.swarmmember_set.filter(status='RN').count()
+    get_num_running.short_description = "Running"
+
+
+@admin.register(Swarm)
+class SwarmAdmin(SimpleHistoryAdmin):
+    list_display = ('name', 'get_num_members', 'get_num_pending',
+                    'get_num_running', 'date_created', 'id')
+    actions = ['do_create_pending', 'do_terminate_running', 'do_terminate_all']
+
+    def do_create_pending(self, request, queryset):
+        for swarm in queryset:
+            swarm.create_pending()
+    do_create_pending.short_description = "Create all members pending creation in selected swarms"
+
+    def do_terminate_running(self, request, queryset):
+        for swarm in queryset:
+            swarm.terminate_running()
+    do_terminate_running.short_description = "Terminate all running members in selected swarms"
+
+    def do_terminate_all(self, request, queryset):
+        for swarm in queryset:
+            swarm.terminate_all()
+    do_terminate_all.short_description = "Terminate all members in selected swarms"
+
 
 class SwarmMember(models.Model):
     STATUS_CHOICES = (
         ('PC', 'Pending Creation'),
-        ('CR', 'Creating')
+        ('CR', 'Creating'),
         ('RN', 'Running'),  # Reaches this state after instance phones in
         ('TM', 'Terminated'),
         ('ER', 'Error'),
     )
-    openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance ID")
+    SOURCE_CHOICES = (
+        ('snapshot', 'Snapshot'),
+        ('image', 'Image'),
+        ('volume', 'Volume'),
+    )
+    openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance UUID")
     status = models.CharField(
         max_length=2, choices=STATUS_CHOICES, default='PC')
     hostname = models.CharField(max_length=255)
     ip = models.GenericIPAddressField(blank=True, null=True)
-    image_name = models.CharField(max_length=255)
+    source_type = models.CharField(
+        max_length=8, choices=SOURCE_CHOICES, default='image')
+    source_uuid = models.UUIDField(verbose_name="Source Device UUID")
+    volume_size = models.IntegerField(default=20, verbose_name="Boot Volume Size (GB)")
     flavor = models.CharField(max_length=255)
     swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
     configuration = models.TextField(blank=True)
+    delete_on_termination = models.BooleanField(default=True)
+    comment = models.CharField(max_length=255, blank=True)
+    history = HistoricalRecords()
 
-    def start():
+    def __get_nova(self):
+        """
+        Return the OpenStack API Nova object
+        """
+        return client.Client(OPENSTACK_VERSION, OPENSTACK_USERNAME, OPENSTACK_PASSWORD, OPENSTACK_PROJID, OPENSTACK_AUTHURL)
+
+    def __get_server(self):
+        """
+        Return the OpenStack API Nova Server object for this instance. Only
+        accesible while instance is running
+        """
+        if self.status != 'RN':
+            # TODO throw an err
+            pass
+        else:
+            return self.__get_nova().servers.get(self.openstack_id)
+
+    def __get_block_dev_map(self):
+        return [{"boot_index": "0",
+                 "uuid": self.source_uuid,
+                 "source_type": self.source_type,
+                 "volume_size": self.volume_size,
+                 "destination_type": "volume",
+                 "delete_on_termination": self.delete_on_termination}]
+
+    def create(self):
         """
         Instructs OpenStack to create the new instance
         """
-        if self.status != 'PC':
-            # Throw an err since the instance is already Running
+        if self.status != 'PC' and self.status != 'TM':
+            # TODO Throw an err since the instance is already Running
             pass
         else:
             # Use OpenStack Compute API to create instance
-            pass
+            # try:
+            self.status = 'CR'
+            self.save()
+            nova = self.__get_nova()
+            srv = nova.servers.create(name=self.hostname,
+                                      # image=nova.glance.find_image(
+                                      #      self.image_name),
+                                      image=None,
+                                      flavor=nova.flavors.find(name=self.flavor),
+                                      usrdata=self.configuration,
+                                      meta={"member-id": str(self.id)},
+                                      block_device_mapping_v2=self.__get_block_dev_map(),
+                                      security_groups=OPENSTACK_SECGRPS,
+                                      availability_zone=OPENSTACK_AVALZONE,
+                                      key_name=OPENSTACK_KEYPAIR)
+            self.openstack_id = srv.id
+            # while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
+            #     # Block until we can at least get an IP address
+            #     pass
+            # self.ip = srv.addresses['standard'][0]['addr']
+            # except:
+            #     # TODO Throw an err
+            #     self.status = 'ER'
+            self.save()
 
-    def reboot():
-        if self.status != 'RN':
-            # Throw an err since only running instances can be rebooted
-            pass
-        else:
-            # Use OpenStack Compute API to reboot instance
-            pass
+    def check_in(self, instance_ip):
+        """
+        Called via API by instance after it has fully booted and is ready to
+        accept tasks
+        """
+        self.ip = instance_ip
+        self.status = 'RN'
+        self.save()
+
+    def reboot(self):
+        """
+        Instructs OpenStack to reboot the instance
+        """
+        self.__get_server().reboot()
+
+    def terminate(self):
+        """
+        Instructs OpenStack to terminate the instance. Also erases the boot
+        volume
+        """
+        nova = self.__get_nova()
+        # if self.delete_on_terminate:
+        #     vol_id = nova.volumes.get_server_volumes(self.openstack_id)[0].id
+        #     nova.volumes.delete_server_volume(self.openstack_id, volume_id=vol_id)
+        nova.servers.get(self.openstack_id).delete()
+        self.ip = None
+        self.status = 'TM'
+        self.save()
+
+    def get_swarm_name(self):
+        try:
+            return self.swarm.name
+        except:
+            return "None"
+    get_swarm_name.short_description = "Swarm"
+
+    def __str__(self):
+        return self.hostname + " of " + self.get_swarm_name()
+
+
+@admin.register(SwarmMember)
+class SwarmMemberAdmin(SimpleHistoryAdmin):
+    list_display = ('hostname', 'status', 'get_swarm_name', 'ip', 'comment', 'id')
+    actions = ['do_create', 'do_set_running', 'do_set_pending', 'do_terminate']
+
+    def do_create(self, request, queryset):
+        for member in queryset:
+            member.create()
+    do_create.short_description = "Create selected members"
+
+    def do_terminate(self, request, queryset):
+        for member in queryset:
+            member.terminate()
+    do_terminate.short_description = "Terminate selected members"
+
+    def do_set_running(self, request, queryset):
+        for member in queryset:
+            member.status = 'RN'
+            member.save()
+    do_set_running.short_description = "Set status of selected members to Running"
+
+    def do_set_pending(self, request, queryset):
+        for member in queryset:
+            member.status = 'RN'
+            member.save()
+    do_set_pending.short_description = "Set status of selected members to Pending Creation"
 
 
 class SwarmMemberLog(models.Model):
@@ -316,3 +551,11 @@ class SwarmMemberLog(models.Model):
     resulting_changeset = models.ForeignKey(
         ChangesetWrapper, null=True, blank=True, on_delete=models.SET_NULL)
     history = HistoricalRecords()
+
+    def __str__(self):
+        return str(self.start_time) + " from " + self.member.hostname
+
+
+@admin.register(SwarmMemberLog)
+class SwarmMemberLogAdmin(SimpleHistoryAdmin):
+    list_display = ('start_time', 'member')
