@@ -374,17 +374,17 @@ class SwarmAdmin(SimpleHistoryAdmin):
     def do_create_pending(self, request, queryset):
         for swarm in queryset:
             swarm.create_pending()
-    do_create_pending.short_description = "Create all members pending creation in selected swarms"
+    do_create_pending.short_description = "Create all pending members of selected swarms"
 
     def do_terminate_running(self, request, queryset):
         for swarm in queryset:
             swarm.terminate_running()
-    do_terminate_running.short_description = "Terminate all running members in selected swarms"
+    do_terminate_running.short_description = "Terminate all running members of selected swarms"
 
     def do_terminate_all(self, request, queryset):
         for swarm in queryset:
             swarm.terminate_all()
-    do_terminate_all.short_description = "Terminate all members in selected swarms"
+    do_terminate_all.short_description = "Terminate all non-pending members of selected swarms"
 
 
 class SwarmMember(models.Model):
@@ -450,30 +450,32 @@ class SwarmMember(models.Model):
             pass
         else:
             # Use OpenStack Compute API to create instance
-            # try:
-            self.status = 'CR'
-            self.save()
-            nova = self.__get_nova()
-            srv = nova.servers.create(name=self.hostname,
-                                      # image=nova.glance.find_image(
-                                      #      self.image_name),
-                                      image=None,
-                                      flavor=nova.flavors.find(name=self.flavor),
-                                      usrdata=self.configuration,
-                                      meta={"member-id": str(self.id)},
-                                      block_device_mapping_v2=self.__get_block_dev_map(),
-                                      security_groups=OPENSTACK_SECGRPS,
-                                      availability_zone=OPENSTACK_AVALZONE,
-                                      key_name=OPENSTACK_KEYPAIR)
-            self.openstack_id = srv.id
-            # while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
-            #     # Block until we can at least get an IP address
-            #     pass
-            # self.ip = srv.addresses['standard'][0]['addr']
-            # except:
-            #     # TODO Throw an err
-            #     self.status = 'ER'
-            self.save()
+            try:
+                self.status = 'CR'
+                self.save()
+                nova = self.__get_nova()
+                srv = nova.servers.create(name=self.hostname,
+                                          # image=nova.glance.find_image(
+                                          #      self.image_name),
+                                          image=None,
+                                          flavor=nova.flavors.find(name=self.flavor),
+                                          usrdata=self.configuration,
+                                          meta={"member-id": str(self.id)},
+                                          block_device_mapping_v2=self.__get_block_dev_map(),
+                                          security_groups=OPENSTACK_SECGRPS,
+                                          availability_zone=OPENSTACK_AVALZONE,
+                                          key_name=OPENSTACK_KEYPAIR)
+                self.openstack_id = srv.id
+                while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
+                    # Block until we can at least get an IP address
+                    pass
+                self.ip = srv.addresses['standard'][0]['addr']
+            except:
+                # TODO Throw an err
+                self.status = 'ER'
+                raise
+            finally:
+                self.save()
 
     def check_in(self, instance_ip):
         """
@@ -496,13 +498,16 @@ class SwarmMember(models.Model):
         volume
         """
         nova = self.__get_nova()
-        # if self.delete_on_terminate:
-        #     vol_id = nova.volumes.get_server_volumes(self.openstack_id)[0].id
-        #     nova.volumes.delete_server_volume(self.openstack_id, volume_id=vol_id)
-        nova.servers.get(self.openstack_id).delete()
-        self.ip = None
-        self.status = 'TM'
-        self.save()
+        try:
+            nova.servers.get(self.openstack_id).delete()
+            self.ip = None
+            self.status = 'TM'
+        except:
+            #TODO throw an error
+            self.status = 'ER'
+            raise
+        finally:
+            self.save()
 
     def get_swarm_name(self):
         try:
