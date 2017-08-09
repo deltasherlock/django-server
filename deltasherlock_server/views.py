@@ -32,6 +32,7 @@ def api_root(request, format=None):
         'eventlabel-list': reverse('eventlabel-list', request=request, format=format),
         'fingerprint-submit': reverse('fingerprint-submit', request=request, format=format),
         'fingerprint-rebuild': reverse('fingerprint-rebuild', request=request, format=format),
+        'swarm-checkin': reverse('swarm-checkin', request=request, format=format),
     })
 
 
@@ -133,3 +134,29 @@ class EventLabelViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = models.EventLabel.objects.all()
     serializer_class = serializers.EventLabelSerializer
+
+
+class SwarmMemberCheckIn(APIView):
+    """
+    Register a SwarmMember as 'Running'. Is called automatically by member after
+    boot.
+    """
+
+    def post(self, request, format=None):
+        # TODO Log all errors!
+        member = models.SwarmMember.objects.get(id=request.data['id'])
+        member.check_in(request.META['REMOTE_ADDR'])
+
+        return Response("Check-in successful", status=status.HTTP_202_ACCEPTED)
+
+class SwarmJob(APIView):
+    """
+    Interface for SwarmMembers to receive work
+    """
+
+class SwarmMemberLogViewSet(viewsets.ModelViewSet):
+    """
+    List, detail, and manipulate all SwarmMemberLogs in the database
+    """
+    queryset = models.SwarmMemberLog.objects.all()
+    serializer_class = serializers.SwarmMemberLogSerializer

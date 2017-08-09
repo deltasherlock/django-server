@@ -543,7 +543,7 @@ class SwarmMemberAdmin(SimpleHistoryAdmin):
 
     def do_set_pending(self, request, queryset):
         for member in queryset:
-            member.status = 'RN'
+            member.status = 'PC'
             member.save()
     do_set_pending.short_description = "Set status of selected members to Pending Creation"
 

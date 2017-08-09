@@ -14,6 +14,7 @@ from . import views
 router = routers.SimpleRouter()
 router.register(r'queue', views.QueueItemViewSet)
 router.register(r'label', views.EventLabelViewSet)
+router.register(r'swarm/log', views.SwarmMemberLogViewSet)
 urlpatterns = router.urls
 
 # We then use custom URL patterns to route the "more complex" items
@@ -23,6 +24,8 @@ urlpatterns += [
         name="fingerprint-submit"),
     url(r'^fingerprint/rebuild/$', views.RebuildFingerprints.as_view(),
         name="fingerprint-rebuild"),
+    url(r'^swarm/check_in/$', views.SwarmMemberCheckIn.as_view(),
+        name="swarm-checkin"),
     url(r'^dbadmin/', admin.site.urls, name="dbadmin"),
 ]
 
