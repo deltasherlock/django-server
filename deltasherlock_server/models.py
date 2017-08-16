@@ -17,11 +17,11 @@ from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
 
 OPENSTACK_VERSION = "2"
-OPENSTACK_USERNAME = "abyrne19"
-OPENSTACK_PASSWORD = "y2gsSNguCQ0POoWw"
-OPENSTACK_PROJID = "e363bb31c52640e59a840bc8504eddb4"
-OPENSTACK_AUTHURL = "https://keystone-kaizen.massopen.cloud:5000/v2.0"
-OPENSTACK_KEYPAIR = "swarm_shared"
+OPENSTACK_USERNAME = "abyrne19@bu.edu"
+OPENSTACK_PASSWORD = "z#31S*dC6c@f"
+OPENSTACK_PROJID = "1539796bf0fe4129871ec444b03d96b3"
+OPENSTACK_AUTHURL = "https://engage1.massopen.cloud:5000/v2.0"
+OPENSTACK_KEYPAIR = "swarm-shared"
 OPENSTACK_AVALZONE = "nova"
 OPENSTACK_SECGRPS = ['default']
 
@@ -405,11 +405,14 @@ class SwarmMember(models.Model):
         max_length=2, choices=STATUS_CHOICES, default='PC')
     hostname = models.CharField(max_length=255)
     ip = models.GenericIPAddressField(blank=True, null=True)
-    source_type = models.CharField(
-        max_length=8, choices=SOURCE_CHOICES, default='image')
-    source_uuid = models.UUIDField(verbose_name="Source Device UUID")
-    volume_size = models.IntegerField(default=20, verbose_name="Boot Volume Size (GB)")
+    # source_type = models.CharField(
+    #     max_length=8, choices=SOURCE_CHOICES, default='image')
+    # source_uuid = models.UUIDField(verbose_name="Source Device UUID")
+    # volume_size = models.IntegerField(default=20, verbose_name="Boot Volume Size (GB)")
+    image = models.CharField(max_length=255, vebose_name="Image name")
     flavor = models.CharField(max_length=255)
+    rq_task_queue = models.CharField(max_length=255)
+    rq_control_queue = models.CharField(max_length=255)
     swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
     configuration = models.TextField(blank=True)
     delete_on_termination = models.BooleanField(default=True)
@@ -433,13 +436,13 @@ class SwarmMember(models.Model):
         else:
             return self.__get_nova().servers.get(self.openstack_id)
 
-    def __get_block_dev_map(self):
-        return [{"boot_index": "0",
-                 "uuid": self.source_uuid,
-                 "source_type": self.source_type,
-                 "volume_size": self.volume_size,
-                 "destination_type": "volume",
-                 "delete_on_termination": self.delete_on_termination}]
+    # def __get_block_dev_map(self):
+    #     return [{"boot_index": "0",
+    #              "uuid": self.source_uuid,
+    #              "source_type": self.source_type,
+    #              "volume_size": self.volume_size,
+    #              "destination_type": "volume",
+    #              "delete_on_termination": self.delete_on_termination}]
 
     def create(self):
         """
@@ -455,13 +458,12 @@ class SwarmMember(models.Model):
                 self.save()
                 nova = self.__get_nova()
                 srv = nova.servers.create(name=self.hostname,
-                                          # image=nova.glance.find_image(
-                                          #      self.image_name),
-                                          image=None,
+                                          image=nova.glance.find_image(self.image),
+                                          #image=None,
                                           flavor=nova.flavors.find(name=self.flavor),
                                           usrdata=self.configuration,
                                           meta={"member-id": str(self.id)},
-                                          block_device_mapping_v2=self.__get_block_dev_map(),
+                                          #block_device_mapping_v2=self.__get_block_dev_map(),
                                           security_groups=OPENSTACK_SECGRPS,
                                           availability_zone=OPENSTACK_AVALZONE,
                                           key_name=OPENSTACK_KEYPAIR)

@@ -151,8 +151,9 @@ class SwarmMemberCheckIn(APIView):
 
 class SwarmJob(APIView):
     """
-    Interface for SwarmMembers to receive work
+    TODO interface for SwarmMembers to receive work
     """
+    pass
 
 class SwarmMemberLogViewSet(viewsets.ModelViewSet):
     """
