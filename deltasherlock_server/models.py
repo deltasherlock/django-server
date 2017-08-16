@@ -409,7 +409,7 @@ class SwarmMember(models.Model):
     #     max_length=8, choices=SOURCE_CHOICES, default='image')
     # source_uuid = models.UUIDField(verbose_name="Source Device UUID")
     # volume_size = models.IntegerField(default=20, verbose_name="Boot Volume Size (GB)")
-    image = models.CharField(max_length=255, vebose_name="Image name")
+    image = models.CharField(max_length=255, verbose_name="Image name")
     flavor = models.CharField(max_length=255)
     rq_task_queue = models.CharField(max_length=255)
     rq_control_queue = models.CharField(max_length=255)
