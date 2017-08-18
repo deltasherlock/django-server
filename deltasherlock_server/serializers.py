@@ -13,7 +13,7 @@ class EventLabelSerializer(serializers.HyperlinkedModelSerializer):
 
     class Meta:
         model = EventLabel
-        fields = ('url', 'name', 'install_script', 'uninstall_script')
+        fields = ('url', 'name', 'version', 'platform', 'cloud', 'install_script', 'uninstall_script')
 
 
 class SwarmMemberLogSerializer(serializers.HyperlinkedModelSerializer):

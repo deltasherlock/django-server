@@ -7,7 +7,6 @@ import uuid
 import pytz
 from copy import copy
 from datetime import datetime
-from novaclient import client
 from django.db import models
 from django.contrib import admin
 from simple_history.models import HistoricalRecords
@@ -16,32 +15,69 @@ from deltasherlock.common.io import DSEncoder, DSDecoder, uid
 from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
 
-OPENSTACK_VERSION = "2"
-OPENSTACK_USERNAME = "abyrne19@bu.edu"
-OPENSTACK_PASSWORD = "z#31S*dC6c@f"
-OPENSTACK_PROJID = "1539796bf0fe4129871ec444b03d96b3"
-OPENSTACK_AUTHURL = "https://engage1.massopen.cloud:5000/v2.0"
-OPENSTACK_KEYPAIR = "swarm-shared"
-OPENSTACK_AVALZONE = "nova"
-OPENSTACK_SECGRPS = ['default']
+## TEMPORARY CONFIG AREA ##
+# Settings can be stored here during development. During production, store them
+# in an actual settings file
+KAIZEN_CONF = {
+    'version': "2"
+    'username': "abyrne19"
+    'password': "y2gsSNguCQ0POoWw"
+    'projid': "e363bb31c52640e59a840bc8504eddb4"
+    'authurl': "https://keystone-kaizen.massopen.cloud:5000/v2.0"
+    'keypair': "swarm_shared"
+    'avalzone': "nova"
+    'secgrps': ['default']
+}
+ENGAGE1_CONF = {
+    'version': "2"
+    'username': "abyrne19@bu.edu"
+    'password': "z#31S*dC6c@f"
+    'projid': "1539796bf0fe4129871ec444b03d96b3"
+    'authurl': "https://engage1.massopen.cloud:5000/v2.0"
+    'keypair': "swarm-shared"
+    'avalzone': "nova"
+    'secgrps': ['default']
+}
+BLUEMIX_CONF = {}
+GCE_CONF = {}
 
+
+CLOUD_CHOICES = (
+    ('MCK', 'MOC Kaizen'),
+    ('MCE`', 'MOC Engage1'),
+    ('IBM', 'IBM BlueMix'),
+    ('GCE', 'Google Compute Engine'),
+)
 
 class EventLabel(models.Model):
     """
     Used to hold "event" (usually an app installation) labels
     """
-    name = models.CharField(max_length=255, primary_key=True)
+    PLATFORM_CHOICES = (
+        ('CT7', 'CentOS 7'),
+        ('UBX', 'Ubuntu Xenial'),
+        ('UBT', 'Ubuntu Trusty'),
+        ('UBP', 'Ubuntu Precise'),
+    )
+    name = models.CharField(max_length=255)
+    version = models.CharField(max_length=255)
+    platform = models.CharField(max_length=3, choices=PLATFORM_CHOICES, default='UBX')
+    cloud = models.CharField(max_length=3, choices=CLOUD_CHOICES, default='IBM')
+
     install_script = models.TextField()
     uninstall_script = models.TextField()
     history = HistoricalRecords()
 
+    def full_name(self):
+        return "|".join([self.name, self.version, self.platform, self.cloud])
+
     def __str__(self):
-        return self.name
+        return self.full_name()
 
 
 @admin.register(EventLabel)
 class EventLabelAdmin(SimpleHistoryAdmin):
-    list_display = ['name']
+    list_display = ('name', 'version', 'platform', 'cloud')
 
 
 class QueueItem(models.Model):
@@ -321,9 +357,8 @@ class Swarm(models.Model):
             # Now set some fields
             new_member.openstack_id = None
             new_member.status = 'PC'
-            new_member.hostname += '-' + uid(size=4)
+            new_member.hostname += '-' + uid(size=4).lower()
             new_member.ip = None
-
             new_member.swarm = self
 
             new_member.save()
@@ -400,32 +435,40 @@ class SwarmMember(models.Model):
         ('image', 'Image'),
         ('volume', 'Volume'),
     )
-    openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance UUID")
+    #openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance UUID")
+    cloud_id = models.CharField(max_length=255, blank=True, verbose_name="Cloud Instance ID")
+    cloud = models.CharField(max_length=3, choices=CLOUD_CHOICES, default='IBM')
     status = models.CharField(
         max_length=2, choices=STATUS_CHOICES, default='PC')
     hostname = models.CharField(max_length=255)
     ip = models.GenericIPAddressField(blank=True, null=True)
-    # source_type = models.CharField(
-    #     max_length=8, choices=SOURCE_CHOICES, default='image')
-    # source_uuid = models.UUIDField(verbose_name="Source Device UUID")
-    # volume_size = models.IntegerField(default=20, verbose_name="Boot Volume Size (GB)")
     image = models.CharField(max_length=255, verbose_name="Image name")
     flavor = models.CharField(max_length=255)
-    rq_task_queue = models.CharField(max_length=255)
-    rq_control_queue = models.CharField(max_length=255)
     swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
-    configuration = models.TextField(blank=True)
-    delete_on_termination = models.BooleanField(default=True)
+    configuration = models.TextField(blank=True, verbose_name="Cloud-Init User Data")
     comment = models.CharField(max_length=255, blank=True)
     history = HistoricalRecords()
+
+    def get_rq_task_queue(self):
+        return "-".join([self.get_swarm_name(), new_member.hostname, "task"])
+
+    def get_rq_control_queue(self):
+        return "-".join([self.get_swarm_name(), new_member.hostname, "control"])
 
     def __get_nova(self):
         """
         Return the OpenStack API Nova object
         """
-        return client.Client(OPENSTACK_VERSION, OPENSTACK_USERNAME, OPENSTACK_PASSWORD, OPENSTACK_PROJID, OPENSTACK_AUTHURL)
+        from novaclient import client
+        if self.cloud == 'MCK':
+            return client.Client(KAIZEN_CONF['version'], KAIZEN_CONF['username'], KAIZEN_CONF['password'], KAIZEN_CONF['projid'], KAIZEN_CONF['authurl'])
+        elif self.cloud == 'MCE':
+            return client.Client(ENGAGE1_CONF['version'], ENGAGE1_CONF['username'], ENGAGE1_CONF['password'], ENGAGE1_CONF['projid'], ENGAGE1_CONF['authurl'])
+        else:
+            #TODO throw an error since we're not using an openstack cloud
+            return
 
-    def __get_server(self):
+    def __get_nova_server(self):
         """
         Return the OpenStack API Nova Server object for this instance. Only
         accesible while instance is running
@@ -436,48 +479,66 @@ class SwarmMember(models.Model):
         else:
             return self.__get_nova().servers.get(self.openstack_id)
 
-    # def __get_block_dev_map(self):
-    #     return [{"boot_index": "0",
-    #              "uuid": self.source_uuid,
-    #              "source_type": self.source_type,
-    #              "volume_size": self.volume_size,
-    #              "destination_type": "volume",
-    #              "delete_on_termination": self.delete_on_termination}]
+    def __openstack_create(self):
+        """
+        Instructs OpenStack to create the new instance
+        """
+        # Use OpenStack Compute API to create instance
+        try:
+            self.status = 'CR'
+            self.save()
+
+            userdata = self.configuration.replace("%HOSTNAME%", self.hostname)
+
+            nova = self.__get_nova()
+            srv = nova.servers.create(name=self.hostname,
+                                      image=nova.glance.find_image(self.image),
+                                      #image=None,
+                                      flavor=nova.flavors.find(name=self.flavor),
+                                      userdata=userdata,
+                                      meta={"member-id": str(self.id)},
+                                      #block_device_mapping_v2=self.__get_block_dev_map(),
+                                      security_groups=OPENSTACK_SECGRPS,
+                                      availability_zone=OPENSTACK_AVALZONE,
+                                      key_name=OPENSTACK_KEYPAIR)
+            self.openstack_id = srv.id
+            while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
+                # Block until we can at least get an IP address
+                pass
+            self.ip = srv.addresses['standard'][0]['addr']
+        except:
+            # TODO Throw an err
+            self.status = 'ER'
+            raise
+        finally:
+            self.save()
+
+    def __gce_create(self):
+        """
+        TODO: Instructs Google Compute Engine (GCE) to create this instance
+        """
+        pass
+
+    def __bluemix_create(self):
+        """
+        TODO: Instructs IBM BlueMix to create this instance
+        """
+        pass
 
     def create(self):
         """
-        Instructs OpenStack to create the new instance
+        Instructs the appropriate cloud platform to create this instance
         """
         if self.status != 'PC' and self.status != 'TM':
             # TODO Throw an err since the instance is already Running
             pass
         else:
-            # Use OpenStack Compute API to create instance
-            try:
-                self.status = 'CR'
-                self.save()
-                nova = self.__get_nova()
-                srv = nova.servers.create(name=self.hostname,
-                                          image=nova.glance.find_image(self.image),
-                                          #image=None,
-                                          flavor=nova.flavors.find(name=self.flavor),
-                                          usrdata=self.configuration,
-                                          meta={"member-id": str(self.id)},
-                                          #block_device_mapping_v2=self.__get_block_dev_map(),
-                                          security_groups=OPENSTACK_SECGRPS,
-                                          availability_zone=OPENSTACK_AVALZONE,
-                                          key_name=OPENSTACK_KEYPAIR)
-                self.openstack_id = srv.id
-                while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
-                    # Block until we can at least get an IP address
-                    pass
-                self.ip = srv.addresses['standard'][0]['addr']
-            except:
-                # TODO Throw an err
-                self.status = 'ER'
-                raise
-            finally:
-                self.save()
+            if self.cloud == "MCK" or self.cloud == "MCE":
+                self.__openstack_create()
+            elif self.cloud == "GCE":
+                self.__gce_create()
+            elif self.cloud == "IBM":
+                self.__bluemix_create()
 
     def check_in(self, instance_ip):
         """
@@ -492,16 +553,39 @@ class SwarmMember(models.Model):
         """
         Instructs OpenStack to reboot the instance
         """
-        self.__get_server().reboot()
+        if self.cloud == "MCK" or self.cloud == "MCE":
+            # OpenStack
+            self.__get_nova_server().reboot()
+        elif self.cloud == "GCE":
+            # Google Compute Engine
+            pass
+        elif self.cloud == "IBM":
+            # IBM BlueMix
+            pass
+        else:
+            # TODO: throw error Unknown cloud option
+            pass
+
 
     def terminate(self):
         """
         Instructs OpenStack to terminate the instance. Also erases the boot
         volume
         """
-        nova = self.__get_nova()
         try:
-            nova.servers.get(self.openstack_id).delete()
+            if self.cloud == "MCK" or self.cloud == "MCE":
+                nova = self.__get_nova()
+                nova.servers.get(self.openstack_id).delete()
+            elif self.cloud == "GCE":
+                # Google Compute Engine
+                pass
+            elif self.cloud == "IBM":
+                # IBM BlueMix
+                pass
+            else:
+                # TODO: throw error Unknown cloud option
+                pass
+
             self.ip = None
             self.status = 'TM'
         except:
@@ -515,7 +599,7 @@ class SwarmMember(models.Model):
         try:
             return self.swarm.name
         except:
-            return "None"
+            return "none"
     get_swarm_name.short_description = "Swarm"
 
     def __str__(self):
