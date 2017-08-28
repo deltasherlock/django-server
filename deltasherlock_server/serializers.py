@@ -36,4 +36,4 @@ class SwarmMemberLogSerializer(serializers.HyperlinkedModelSerializer):
 
     class Meta:
         model = models.SwarmMemberLog
-        fields = ('url', 'member', 'timestamp', 'log', 'resulting_changeset')
+        fields = ('url', 'member', 'timestamp', 'log', 'log_type', 'resulting_changeset')

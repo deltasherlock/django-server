@@ -84,6 +84,15 @@ class EventLabel(models.Model):
     def full_name(self):
         return "|".join([self.name, self.version, self.platform, self.cloud])
 
+    def get_dict(self):
+        """
+        Same as __dict__, but any non-native types (like django objects) are
+        removed
+        """
+        sdict = self.__dict__
+        sdict.pop('_state')
+        return sdict
+
     def __str__(self):
         return self.full_name()
 
@@ -762,9 +771,9 @@ class SwarmMemberLog(models.Model):
     history = HistoricalRecords()
 
     def __str__(self):
-        return str(self.timestamp) + " from " + self.member.hostname
+        return self.log_type + ": " + str(self.timestamp)
 
 
 @admin.register(SwarmMemberLog)
 class SwarmMemberLogAdmin(SimpleHistoryAdmin):
-    list_display = ('member', 'timestamp')
+    list_display = ('log_type', 'member', 'timestamp')
