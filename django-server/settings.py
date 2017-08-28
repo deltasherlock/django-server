@@ -82,8 +82,8 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'deltasherlock_django',
         'USER': 'deltasherlock',
-        'PASSWORD': '64A^WeMA^Z!7UT9GweTY',
-        'HOST': 'localhost',
+        'PASSWORD': 'FkJ%p770dfHKu9b@FIiM',
+        'HOST': 'db.v-m.tech',
         'PORT': '3306'
     }
 }

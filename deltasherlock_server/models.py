@@ -8,6 +8,7 @@ import pytz
 from copy import copy
 from datetime import datetime
 from django.db import models
+from django.urls import reverse
 from django.contrib import admin
 from simple_history.models import HistoricalRecords
 from simple_history.admin import SimpleHistoryAdmin
@@ -19,35 +20,41 @@ from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMetho
 # Settings can be stored here during development. During production, store them
 # in an actual settings file
 KAIZEN_CONF = {
-    'version': "2"
-    'username': "abyrne19"
-    'password': "y2gsSNguCQ0POoWw"
-    'projid': "e363bb31c52640e59a840bc8504eddb4"
-    'authurl': "https://keystone-kaizen.massopen.cloud:5000/v2.0"
-    'keypair': "swarm_shared"
-    'avalzone': "nova"
+    'version': "2",
+    'username': "abyrne19",
+    'password': "y2gsSNguCQ0POoWw",
+    'projid': "e363bb31c52640e59a840bc8504eddb4",
+    'authurl': "https://keystone-kaizen.massopen.cloud:5000/v2.0",
+    'keypair': "swarm_shared",
+    'avalzone': "nova",
     'secgrps': ['default']
 }
 ENGAGE1_CONF = {
-    'version': "2"
-    'username': "abyrne19@bu.edu"
-    'password': "z#31S*dC6c@f"
-    'projid': "1539796bf0fe4129871ec444b03d96b3"
-    'authurl': "https://engage1.massopen.cloud:5000/v2.0"
-    'keypair': "swarm-shared"
-    'avalzone': "nova"
+    'version': "2",
+    'username': "abyrne19@bu.edu",
+    'password': "z#31S*dC6c@f",
+    'projid': "1539796bf0fe4129871ec444b03d96b3",
+    'authurl': "https://engage1.massopen.cloud:5000/v2.0",
+    'keypair': "swarm-shared",
+    'avalzone': "nova",
     'secgrps': ['default']
 }
 BLUEMIX_CONF = {}
-GCE_CONF = {}
+GCE_CONF = {
+    'project': 'silver-bullet-bu',
+    'region': 'us-central1',
+    'zone': 'us-central1-a',
+    'serviceacct': 'default'
+}
 
 
 CLOUD_CHOICES = (
     ('MCK', 'MOC Kaizen'),
-    ('MCE`', 'MOC Engage1'),
+    ('MCE', 'MOC Engage1'),
     ('IBM', 'IBM BlueMix'),
     ('GCE', 'Google Compute Engine'),
 )
+
 
 class EventLabel(models.Model):
     """
@@ -57,9 +64,15 @@ class EventLabel(models.Model):
         ('CT7', 'CentOS 7'),
         ('UBX', 'Ubuntu Xenial'),
         ('UBT', 'Ubuntu Trusty'),
-        ('UBP', 'Ubuntu Precise'),
+        ('UBP', 'Ubuntu Precise')
+    )
+    GROUP_CHOICES = (
+        ('RP', 'Repository Packages'),
+        ('MI', 'Manual Installations'),
+        ('VD', 'Version Detection')
     )
     name = models.CharField(max_length=255)
+    group = models.CharField(max_length=2, choices=GROUP_CHOICES, default='RP')
     version = models.CharField(max_length=255)
     platform = models.CharField(max_length=3, choices=PLATFORM_CHOICES, default='UBX')
     cloud = models.CharField(max_length=3, choices=CLOUD_CHOICES, default='IBM')
@@ -77,7 +90,7 @@ class EventLabel(models.Model):
 
 @admin.register(EventLabel)
 class EventLabelAdmin(SimpleHistoryAdmin):
-    list_display = ('name', 'version', 'platform', 'cloud')
+    list_display = ('name', 'group', 'version', 'platform', 'cloud')
 
 
 class QueueItem(models.Model):
@@ -206,19 +219,24 @@ class DeltaSherlockWrapper(models.Model):
 
         # Loop through each label in the raw object
         for label in object_to_wrap.labels:
-            # See if there's already an EventLabel in the DB for that
-            label_qset = EventLabel.objects.filter(name=label)
-            event_label = None
+            try:
+                # Assume the label is an ID for an EventLabel
+                self.labels.add(EventLabel.objects.get(id=label))
+            except:
+                # So it's not. Try this
+                # See if there's already an EventLabel in the DB for that
+                label_qset = EventLabel.objects.filter(name=label)
+                event_label = None
 
-            if not label_qset.exists():
-                # Create one if it doesn't exist
-                event_label = EventLabel.objects.create(name=label)
-            else:
-                # Use the existing one if it does
-                event_label = label_qset[0]
+                if not label_qset.exists():
+                    # Create one if it doesn't exist
+                    event_label = EventLabel.objects.create(name=label)
+                else:
+                    # Use the existing one if it does
+                    event_label = label_qset[0]
 
-            # Add the relationship
-            self.labels.add(event_label)
+                # Add the relationship
+                self.labels.add(event_label)
 
         self.save()
 
@@ -336,7 +354,7 @@ class Swarm(models.Model):
         Generate a number of SwarmMembers based on a supplied model SwarmMember.
         The generated members will be carbon copies of the model, except a unique
         identifier will be appended to the hostname, and some fields (like
-        openstack_id, status, and ip) will be left blank/at their default, even
+        cloud_id, status, and ip) will be left blank/at their default, even
         if they are populated in the model. The resulting SwarmMembers will be in
         the "Pending Creation" state and part of this Swarm.
 
@@ -355,7 +373,7 @@ class Swarm(models.Model):
             new_member.save()
 
             # Now set some fields
-            new_member.openstack_id = None
+            new_member.cloud_id = None
             new_member.status = 'PC'
             new_member.hostname += '-' + uid(size=4).lower()
             new_member.ip = None
@@ -430,30 +448,30 @@ class SwarmMember(models.Model):
         ('TM', 'Terminated'),
         ('ER', 'Error'),
     )
-    SOURCE_CHOICES = (
-        ('snapshot', 'Snapshot'),
-        ('image', 'Image'),
-        ('volume', 'Volume'),
+    DISK_TYPE_CHOICES = (
+        ('SD', 'Solid State'),
+        ('HD', 'Traditional'),
     )
     #openstack_id = models.UUIDField(null=True, blank=True, verbose_name="OpenStack Instance UUID")
-    cloud_id = models.CharField(max_length=255, blank=True, verbose_name="Cloud Instance ID")
+    cloud_id = models.CharField(max_length=255, blank=True, verbose_name="Cloud instance ID")
     cloud = models.CharField(max_length=3, choices=CLOUD_CHOICES, default='IBM')
-    status = models.CharField(
-        max_length=2, choices=STATUS_CHOICES, default='PC')
-    hostname = models.CharField(max_length=255)
-    ip = models.GenericIPAddressField(blank=True, null=True)
+    status = models.CharField(max_length=2, choices=STATUS_CHOICES, default='PC')
+    hostname = models.CharField(max_length=255, unique=True)
+    ip = models.GenericIPAddressField(blank=True, null=True, verbose_name="IP Address")
     image = models.CharField(max_length=255, verbose_name="Image name")
     flavor = models.CharField(max_length=255)
+    disk_size = models.IntegerField(default=10, verbose_name="Disk size in GB (for GCE)")
+    disk_type = models.CharField(max_length=2, choices=DISK_TYPE_CHOICES, default='SD', verbose_name="Disk type (for GCE)")
     swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
-    configuration = models.TextField(blank=True, verbose_name="Cloud-Init User Data")
+    configuration = models.TextField(blank=True, verbose_name="Cloud-init user data")
     comment = models.CharField(max_length=255, blank=True)
     history = HistoricalRecords()
 
-    def get_rq_task_queue(self):
-        return "-".join([self.get_swarm_name(), new_member.hostname, "task"])
-
-    def get_rq_control_queue(self):
-        return "-".join([self.get_swarm_name(), new_member.hostname, "control"])
+    def attached_rq_queues(self):
+        queues = ["-".join([self.get_swarm_name(), self.hostname, "task"]),
+                  "-".join([self.get_swarm_name(), self.hostname, "networking"]),
+                  "-".join([self.get_swarm_name(), self.hostname, "auxiliary"])]
+        return queues
 
     def __get_nova(self):
         """
@@ -465,7 +483,7 @@ class SwarmMember(models.Model):
         elif self.cloud == 'MCE':
             return client.Client(ENGAGE1_CONF['version'], ENGAGE1_CONF['username'], ENGAGE1_CONF['password'], ENGAGE1_CONF['projid'], ENGAGE1_CONF['authurl'])
         else:
-            #TODO throw an error since we're not using an openstack cloud
+            # TODO throw an error since we're not using an openstack cloud
             return
 
     def __get_nova_server(self):
@@ -477,7 +495,11 @@ class SwarmMember(models.Model):
             # TODO throw an err
             pass
         else:
-            return self.__get_nova().servers.get(self.openstack_id)
+            return self.__get_nova().servers.get(self.cloud_id)
+
+    def __get_compute(self):
+        from googleapiclient.discovery import build
+        return build('compute', 'v1')
 
     def __openstack_create(self):
         """
@@ -485,27 +507,31 @@ class SwarmMember(models.Model):
         """
         # Use OpenStack Compute API to create instance
         try:
-            self.status = 'CR'
-            self.save()
-
             userdata = self.configuration.replace("%HOSTNAME%", self.hostname)
-
             nova = self.__get_nova()
+            if self.cloud == 'MCK':
+                sg = KAIZEN_CONF['secgrps']
+                az = KAIZEN_CONF['avalzone']
+                kn = KAIZEN_CONF['keypair']
+            else:
+                sg = ENGAGE1_CONF['secgrps']
+                az = ENGAGE1_CONF['avalzone']
+                kn = ENGAGE1_CONF['keypair']
+
             srv = nova.servers.create(name=self.hostname,
                                       image=nova.glance.find_image(self.image),
-                                      #image=None,
                                       flavor=nova.flavors.find(name=self.flavor),
                                       userdata=userdata,
-                                      meta={"member-id": str(self.id)},
-                                      #block_device_mapping_v2=self.__get_block_dev_map(),
-                                      security_groups=OPENSTACK_SECGRPS,
-                                      availability_zone=OPENSTACK_AVALZONE,
-                                      key_name=OPENSTACK_KEYPAIR)
-            self.openstack_id = srv.id
-            while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
-                # Block until we can at least get an IP address
-                pass
-            self.ip = srv.addresses['standard'][0]['addr']
+                                      meta={"member-id": str(self.id),
+                                            "member-url": reverse("swarmmember-detail", args=[self.id])},
+                                      security_groups=sg,
+                                      availability_zone=az,
+                                      key_name=kn)
+            self.cloud_id = srv.id
+            # while 'standard' not in self.__get_nova().servers.get(srv.id).addresses:
+            #     # Block until we can at least get an IP address
+            #     pass
+            # self.ip = srv.addresses['standard'][0]['addr']
         except:
             # TODO Throw an err
             self.status = 'ER'
@@ -517,7 +543,89 @@ class SwarmMember(models.Model):
         """
         TODO: Instructs Google Compute Engine (GCE) to create this instance
         """
-        pass
+        userdata = self.configuration.replace("%HOSTNAME%", self.hostname)
+        config = {
+            "name": self.hostname,
+            "minCpuPlatform": "Automatic",
+            "machineType": "projects/" + GCE_CONF['project'] + "/zones/" + GCE_CONF['zone'] + "/machineTypes/" + self.flavor,
+            "metadata": {
+                "items": [
+                    {
+                        "key": "user-data",
+                        "value": userdata
+                    },
+                    {
+                        "key": "member-id",
+                        "value": str(self.id)
+                    },
+                    {
+                        "key": "member-url",
+                        "value": reverse("swarmmember-detail", args=[self.id])
+                    }
+                ]
+            },
+            "labels": {
+                "swarm": self.get_swarm_name()
+            },
+            "disks": [
+                {
+                    "type": "PERSISTENT",
+                    "boot": True,
+                    "mode": "READ_WRITE",
+                    "autoDelete": True,
+                    "deviceName": self.hostname,
+                    "initializeParams": {
+                        "sourceImage": "projects/" + GCE_CONF['project'] + "/global/images/" + self.image,
+                        "diskType": "projects/" + GCE_CONF['project'] + "/zones/" + GCE_CONF['zone'] + "/diskTypes/pd-ssd",
+                        "diskSizeGb": self.disk_size
+                    }
+                }
+            ],
+            "canIpForward": False,
+            "networkInterfaces": [
+                {
+                    "network": "projects/" + GCE_CONF['project'] + "/global/networks/default",
+                    "subnetwork": "projects/" + GCE_CONF['project'] + "/regions/" + GCE_CONF['region'] + "/subnetworks/default",
+                    "accessConfigs": [
+                        {
+                            "name": "External NAT",
+                            "type": "ONE_TO_ONE_NAT"
+                        }
+                    ],
+                    "aliasIpRanges": []
+                }
+            ],
+            "scheduling": {
+                "preemptible": False,
+                "onHostMaintenance": "MIGRATE",
+                "automaticRestart": True
+            },
+            "serviceAccounts": [
+                {
+                    "email": GCE_CONF['serviceacct'],
+                    "scopes": [
+                        "https://www.googleapis.com/auth/devstorage.read_only",
+                        "https://www.googleapis.com/auth/logging.write",
+                        "https://www.googleapis.com/auth/monitoring.write",
+                        "https://www.googleapis.com/auth/servicecontrol",
+                        "https://www.googleapis.com/auth/service.management.readonly",
+                        "https://www.googleapis.com/auth/trace.append"
+                    ]
+                }
+            ]
+        }
+
+        try:
+            compute = self.__get_compute()
+            insert_response = compute.instances().insert(project=GCE_CONF['project'], zone = GCE_CONF['zone'], body=config).execute()
+            self.cloud_id = insert_response['targetId']
+            # TODO Log response from API (do this for all clouds)
+        except:
+            # TODO Throw an err
+            self.status = 'ER'
+            raise
+        finally:
+            self.save()
 
     def __bluemix_create(self):
         """
@@ -533,6 +641,9 @@ class SwarmMember(models.Model):
             # TODO Throw an err since the instance is already Running
             pass
         else:
+            self.status = 'CR'
+            self.save()
+
             if self.cloud == "MCK" or self.cloud == "MCE":
                 self.__openstack_create()
             elif self.cloud == "GCE":
@@ -548,6 +659,9 @@ class SwarmMember(models.Model):
         self.ip = instance_ip
         self.status = 'RN'
         self.save()
+
+        # Return the names of the RQ task queues to attatch to
+        return self.attached_rq_queues()
 
     def reboot(self):
         """
@@ -566,7 +680,6 @@ class SwarmMember(models.Model):
             # TODO: throw error Unknown cloud option
             pass
 
-
     def terminate(self):
         """
         Instructs OpenStack to terminate the instance. Also erases the boot
@@ -574,11 +687,10 @@ class SwarmMember(models.Model):
         """
         try:
             if self.cloud == "MCK" or self.cloud == "MCE":
-                nova = self.__get_nova()
-                nova.servers.get(self.openstack_id).delete()
+                self.__get_nova().servers.get(self.cloud_id).delete()
             elif self.cloud == "GCE":
                 # Google Compute Engine
-                pass
+                self.__get_compute().instances().delete(project=GCE_CONF['project'], zone = GCE_CONF['zone'], instance=self.hostname).execute()
             elif self.cloud == "IBM":
                 # IBM BlueMix
                 pass
@@ -589,7 +701,7 @@ class SwarmMember(models.Model):
             self.ip = None
             self.status = 'TM'
         except:
-            #TODO throw an error
+            # TODO throw an error
             self.status = 'ER'
             raise
         finally:
@@ -608,7 +720,7 @@ class SwarmMember(models.Model):
 
 @admin.register(SwarmMember)
 class SwarmMemberAdmin(SimpleHistoryAdmin):
-    list_display = ('hostname', 'status', 'get_swarm_name', 'ip', 'comment', 'id')
+    list_display = ('hostname', 'status', 'get_swarm_name', 'ip', 'cloud', 'comment', 'id')
     actions = ['do_create', 'do_set_running', 'do_set_pending', 'do_terminate']
 
     def do_create(self, request, queryset):
@@ -635,18 +747,24 @@ class SwarmMemberAdmin(SimpleHistoryAdmin):
 
 
 class SwarmMemberLog(models.Model):
+    LOG_TYPE_CHOICES = (
+        ('IN', 'Installation'),
+        ('NT', 'Notification'),
+        ('ER', 'Error'),
+        ('OT', 'Other'),
+    )
+    log_type = models.CharField(max_length=2, choices=LOG_TYPE_CHOICES, default='IN')
     member = models.ForeignKey(SwarmMember, null=True, on_delete=models.SET_NULL)
-    start_time = models.DateTimeField(auto_now_add=True)
-    last_updated = models.DateTimeField(auto_now=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
     log = models.TextField(blank=True)
     resulting_changeset = models.ForeignKey(
         ChangesetWrapper, null=True, blank=True, on_delete=models.SET_NULL)
     history = HistoricalRecords()
 
     def __str__(self):
-        return str(self.start_time) + " from " + self.member.hostname
+        return str(self.timestamp) + " from " + self.member.hostname
 
 
 @admin.register(SwarmMemberLog)
 class SwarmMemberLogAdmin(SimpleHistoryAdmin):
-    list_display = ('start_time', 'member')
+    list_display = ('member', 'timestamp')

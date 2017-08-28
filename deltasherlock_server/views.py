@@ -19,6 +19,7 @@ from deltasherlock.server import manager
 from deltasherlock.common.fingerprinting import FingerprintingMethod
 from deltasherlock_server import models
 from deltasherlock_server import serializers
+from deltasherlock.common.io import DSEncoder, DSDecoder
 
 
 @api_view(['GET'])
@@ -30,9 +31,11 @@ def api_root(request, format=None):
         'dbadmin': reverse('admin:index', request=request, format=format),
         'queueitem-list': reverse('queueitem-list', request=request, format=format),
         'eventlabel-list': reverse('eventlabel-list', request=request, format=format),
+        'changesetwrapper-list': reverse('changesetwrapper-list', request=request, format=format),
+        'swarmmember-list': reverse('swarmmember-list', request=request, format=format),
+        'swarmmemberlog-list': reverse('swarmmemberlog-list', request=request, format=format),
         'fingerprint-submit': reverse('fingerprint-submit', request=request, format=format),
         'fingerprint-rebuild': reverse('fingerprint-rebuild', request=request, format=format),
-        'swarm-checkin': reverse('swarm-checkin', request=request, format=format),
     })
 
 
@@ -136,24 +139,21 @@ class EventLabelViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = serializers.EventLabelSerializer
 
 
-class SwarmMemberCheckIn(APIView):
+class ChangesetWrapperViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Register a SwarmMember as 'Running'. Is called automatically by member after
-    boot.
+    List and get details on all ChangesetWrappers in the database
     """
+    queryset = models.ChangesetWrapper.objects.all()
+    serializer_class = serializers.ChangesetWrapperSerializer
 
-    def post(self, request, format=None):
-        # TODO Log all errors!
-        member = models.SwarmMember.objects.get(id=request.data['id'])
-        member.check_in(request.META['REMOTE_ADDR'])
 
-        return Response("Check-in successful", status=status.HTTP_202_ACCEPTED)
+class SwarmMemberViewSet(viewsets.ModelViewSet):
+    """
+    List and get details on all SwarmMembers in the database
+    """
+    queryset = models.SwarmMember.objects.all()
+    serializer_class = serializers.SwarmMemberSerializer
 
-class SwarmJob(APIView):
-    """
-    TODO interface for SwarmMembers to receive work
-    """
-    pass
 
 class SwarmMemberLogViewSet(viewsets.ModelViewSet):
     """
@@ -161,3 +161,36 @@ class SwarmMemberLogViewSet(viewsets.ModelViewSet):
     """
     queryset = models.SwarmMemberLog.objects.all()
     serializer_class = serializers.SwarmMemberLogSerializer
+
+
+class SwarmChangesetSubmit(APIView):
+    """
+    Accepts a changeset from a SwarmMember and stores it in the database
+    """
+
+    def post(self, request, format=None):
+        # TODO Log all errors!
+        deserialized_cs = DSDecoder().decode(request.data['changeset'])
+        cs_wrapper = models.ChangesetWrapper()
+        cs_wrapper.wrap(deserialized_cs)
+
+        deserialized_csw = serializers.ChangesetWrapperSerializer(cs_wrapper, context={'request': request})
+
+        return Response(deserialized_csw.data, status=status.HTTP_202_ACCEPTED)
+
+# class SwarmMemberCheckIn(APIView):
+#     """
+#     Register a SwarmMember as 'Running'. Is called automatically by member after
+#     boot.
+#     """
+#
+#     def post(self, request, format=None):
+#         # TODO Log all errors!
+#         member = models.SwarmMember.objects.get(id=request.data['id'])
+#         ip = request.META['REMOTE_ADDR']
+#         if 'ip' in request.data:
+#             # Use the IP given by the client, since that's the local IP
+#             ip = request.data['ip']
+#         task_queues = member.check_in(ip)
+#
+#         return Response(task_queues, status=status.HTTP_202_ACCEPTED)
