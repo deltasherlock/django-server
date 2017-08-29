@@ -90,7 +90,8 @@ class EventLabel(models.Model):
         removed
         """
         sdict = self.__dict__
-        sdict.pop('_state')
+        if '_state' in sdict:
+            sdict.pop('_state')
         return sdict
 
     def __str__(self):
@@ -211,8 +212,8 @@ class DeltaSherlockWrapper(models.Model):
     labels = models.ManyToManyField(EventLabel, blank=True)
     predicted_quantity = models.IntegerField()
     json_data = models.TextField()
-    history = HistoricalRecords(inherit=True)
     last_updated = models.DateTimeField(auto_now=True)
+
 
     def wrap(self, object_to_wrap):
         """
@@ -379,15 +380,14 @@ class Swarm(models.Model):
 
             # Set the primary_key to None, which effectively makes a db copy
             new_member.pk = None
-            new_member.save()
-
             # Now set some fields
-            new_member.cloud_id = None
+            new_member.cloud_id = ''
             new_member.status = 'PC'
             new_member.hostname += '-' + uid(size=4).lower()
             new_member.ip = None
-            new_member.swarm = self
+            new_member.save()
 
+            new_member.swarm = self
             new_member.save()
 
     def create_pending(self):
@@ -516,7 +516,7 @@ class SwarmMember(models.Model):
         """
         # Use OpenStack Compute API to create instance
         try:
-            userdata = self.configuration.replace("%HOSTNAME%", self.hostname)
+            userdata = self.configuration.replace("%HOSTNAME%", self.hostname).replace("%URL%", reverse("swarmmember-detail", args=[self.id]))
             nova = self.__get_nova()
             if self.cloud == 'MCK':
                 sg = KAIZEN_CONF['secgrps']
@@ -716,6 +716,13 @@ class SwarmMember(models.Model):
         finally:
             self.save()
 
+    def rebuild(self):
+        """
+        Terminates and re-creates this instance
+        """
+        self.terminate()
+        self.create()
+
     def get_swarm_name(self):
         try:
             return self.swarm.name
@@ -768,7 +775,6 @@ class SwarmMemberLog(models.Model):
     log = models.TextField(blank=True)
     resulting_changeset = models.ForeignKey(
         ChangesetWrapper, null=True, blank=True, on_delete=models.SET_NULL)
-    history = HistoricalRecords()
 
     def __str__(self):
         return self.log_type + ": " + str(self.timestamp)

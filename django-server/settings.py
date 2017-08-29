@@ -23,9 +23,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = 'gawm=d9$elew8k5)e9uw$rz*jx5^jkk-lfab@i0mitsmq%xse8'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = ["localhost", "api.v-m.tech", "rick.v-m.tech"]
 
 
 # Application definition
@@ -125,7 +125,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.10/howto/static-files/
 
-STATIC_URL = '/static/'
+STATIC_URL = 'http://static.v-m.tech:8000/'
+STATIC_ROOT = '/home/ubuntu/.deltasherlock/static'
 
 REST_FRAMEWORK = {
     # Use Django's standard `django.contrib.auth` permissions,
