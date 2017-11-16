@@ -5,16 +5,24 @@ manage.py migrate" after making any significant changes here.
 """
 import uuid
 import pytz
+import pickle
 from copy import copy
+from hashlib import md5
 from datetime import datetime
+from django import forms
 from django.db import models
 from django.urls import reverse
 from django.contrib import admin
+from django.core import exceptions
+from django.utils.text import capfirst
+from multiselectfield import MultiSelectField
 from simple_history.models import HistoricalRecords
 from simple_history.admin import SimpleHistoryAdmin
+from deltasherlock.server.learning import MLModel, MLAlgorithm
 from deltasherlock.common.io import DSEncoder, DSDecoder, uid
 from deltasherlock.common.changesets import Changeset, ChangesetRecord
 from deltasherlock.common.fingerprinting import Fingerprint, FingerprintingMethod
+
 
 ## TEMPORARY CONFIG AREA ##
 # Settings can be stored here during development. During production, store them
@@ -55,24 +63,58 @@ CLOUD_CHOICES = (
     ('GCE', 'Google Compute Engine'),
 )
 
+PLATFORM_CHOICES = (
+    ('CT7', 'CentOS 7'),
+    ('UBX', 'Ubuntu Xenial'),
+    ('UBT', 'Ubuntu Trusty'),
+    ('UBP', 'Ubuntu Precise')
+)
+GROUP_CHOICES = (
+    ('RP', 'Repository Packages'),
+    ('MI', 'Manual Installations'),
+    ('VD', 'Version Detection')
+)
+PURPOSE_CHOICES = (
+    ('TR', 'Training'),
+    ('TS', 'Testing'),
+    ('OT', 'Other')
+)
+
+# It's probably a good idea to make sure this always matches up with the
+# enum defined in deltasherlock.common.fingerprinting.FingerprintingMethod.
+# And in general, the numbering scheme should ALWAYS remain backward
+# compat.
+FINGERPRINTING_METHOD_CHOICES = (
+    (0, 'undefined'),
+    (1, 'histogram'),
+    (2, 'filetree'),
+    (3, 'histofiletree'),
+    (4, 'neighbor'),
+    (5, 'histoneighbor'),
+    (6, 'filetreeneighbor'),
+    (7, 'combined'),
+)
+
+# Same as note above: Ensure this matches up with
+# deltasherlock.common.server.learning.MLAlgorithm
+ML_ALGORITHM_CHOICES = (
+    (0, 'undefined'),
+    (1, 'logistic_regression'),
+    (2, 'decision_tree'),
+    (3, 'random_forest'),
+    (4, 'svm_rbf'),
+    (5, 'svm_linear'),
+    (6, 'adaboost'),
+    (7, 'gradient_boosting'),
+)
 
 class EventLabel(models.Model):
     """
     Used to hold "event" (usually an app installation) labels
     """
-    PLATFORM_CHOICES = (
-        ('CT7', 'CentOS 7'),
-        ('UBX', 'Ubuntu Xenial'),
-        ('UBT', 'Ubuntu Trusty'),
-        ('UBP', 'Ubuntu Precise')
-    )
-    GROUP_CHOICES = (
-        ('RP', 'Repository Packages'),
-        ('MI', 'Manual Installations'),
-        ('VD', 'Version Detection')
-    )
     name = models.CharField(max_length=255)
     group = models.CharField(max_length=2, choices=GROUP_CHOICES, default='RP')
+    purpose = models.CharField(max_length=2, choices=PURPOSE_CHOICES, default='TR')
     version = models.CharField(max_length=255)
     platform = models.CharField(max_length=3, choices=PLATFORM_CHOICES, default='UBX')
     cloud = models.CharField(max_length=3, choices=CLOUD_CHOICES, default='IBM')
@@ -82,7 +124,7 @@ class EventLabel(models.Model):
     history = HistoricalRecords()
 
     def full_name(self):
-        return "|".join([self.name, self.version, self.platform, self.cloud])
+        return "|".join([self.name, self.version, self.purpose, self.platform, self.cloud])
 
     def get_dict(self):
         """
@@ -100,7 +142,7 @@ class EventLabel(models.Model):
 
 @admin.register(EventLabel)
 class EventLabelAdmin(SimpleHistoryAdmin):
-    list_display = ('name', 'group', 'version', 'platform', 'cloud')
+    list_display = ('name', 'group', 'purpose', 'version', 'platform', 'cloud')
 
 
 class QueueItem(models.Model):
@@ -214,7 +256,6 @@ class DeltaSherlockWrapper(models.Model):
     json_data = models.TextField()
     last_updated = models.DateTimeField(auto_now=True)
 
-
     def wrap(self, object_to_wrap):
         """
         Creates a "wrapped" version of the input object by extracting relevant
@@ -268,7 +309,7 @@ class DeltaSherlockWrapper(models.Model):
         """
         output = ''
         for event_label in self.labels.all():
-            output += str(event_label.name) + ", "
+            output += str(event_label) + ", "
         return output
     get_labels.short_description = "Event Labels"
 
@@ -305,20 +346,6 @@ class FingerprintWrapper(DeltaSherlockWrapper):
     A database wrapper around a Fingerprint object. See the docs for
     DeltaSherlockWrapper for more details.
     """
-    # It's probably a good idea to make sure this always matches up with the
-    # enum defined in deltasherlock.common.fingerprinting.FingerprintingMethod.
-    # And in general, the numbering scheme should ALWAYS remain backward
-    # compat.
-    FINGERPRINTING_METHOD_CHOICES = (
-        (0, 'undefined'),
-        (1, 'histogram'),
-        (2, 'filetree'),
-        (3, 'histofiletree'),
-        (4, 'neighbor'),
-        (5, 'histoneighbor'),
-        (6, 'filetreeneighbor'),
-        (7, 'combined'),
-    )
 
     method = models.IntegerField(
         choices=FINGERPRINTING_METHOD_CHOICES, default=0)
@@ -343,7 +370,7 @@ class FingerprintWrapper(DeltaSherlockWrapper):
         return obj
 
     def __str__(self):
-        return "FP" + str(self.id) + " labeled " + str(self.labels) + " (P.Qty: " + str(self.predicted_quantity) + ", Method: " + str(self.method) + ") originating from CS" + str(self.origin_changeset_id)
+        return "FP" + str(self.id) + " labeled " + str(self.get_labels()) + " (P.Qty: " + str(self.predicted_quantity) + ", Method: " + str(self.method) + ") originating from CS" + str(self.origin_changeset_id)
 
 
 @admin.register(FingerprintWrapper)
@@ -470,7 +497,8 @@ class SwarmMember(models.Model):
     image = models.CharField(max_length=255, verbose_name="Image name")
     flavor = models.CharField(max_length=255)
     disk_size = models.IntegerField(default=10, verbose_name="Disk size in GB (for GCE)")
-    disk_type = models.CharField(max_length=2, choices=DISK_TYPE_CHOICES, default='SD', verbose_name="Disk type (for GCE)")
+    disk_type = models.CharField(max_length=2, choices=DISK_TYPE_CHOICES,
+                                 default='SD', verbose_name="Disk type (for GCE)")
     swarm = models.ForeignKey(Swarm, null=True, blank=True, on_delete=models.SET_NULL)
     configuration = models.TextField(blank=True, verbose_name="Cloud-init user data")
     comment = models.CharField(max_length=255, blank=True)
@@ -514,9 +542,9 @@ class SwarmMember(models.Model):
         """
         Instructs OpenStack to create the new instance
         """
-        # Use OpenStack Compute API to create instance
         try:
-            userdata = self.configuration.replace("%HOSTNAME%", self.hostname).replace("%URL%", reverse("swarmmember-detail", args=[self.id]))
+            userdata = self.configuration.replace("%HOSTNAME%", self.hostname).replace(
+                "%URL%", reverse("swarmmember-detail", args=[self.id]))
             nova = self.__get_nova()
             if self.cloud == 'MCK':
                 sg = KAIZEN_CONF['secgrps']
@@ -626,7 +654,8 @@ class SwarmMember(models.Model):
 
         try:
             compute = self.__get_compute()
-            insert_response = compute.instances().insert(project=GCE_CONF['project'], zone = GCE_CONF['zone'], body=config).execute()
+            insert_response = compute.instances().insert(
+                project=GCE_CONF['project'], zone=GCE_CONF['zone'], body=config).execute()
             self.cloud_id = insert_response['targetId']
             # TODO Log response from API (do this for all clouds)
         except:
@@ -699,7 +728,8 @@ class SwarmMember(models.Model):
                 self.__get_nova().servers.get(self.cloud_id).delete()
             elif self.cloud == "GCE":
                 # Google Compute Engine
-                self.__get_compute().instances().delete(project=GCE_CONF['project'], zone = GCE_CONF['zone'], instance=self.hostname).execute()
+                self.__get_compute().instances().delete(project=GCE_CONF['project'], zone=GCE_CONF[
+                    'zone'], instance=self.hostname).execute()
             elif self.cloud == "IBM":
                 # IBM BlueMix
                 pass
@@ -737,7 +767,7 @@ class SwarmMember(models.Model):
 @admin.register(SwarmMember)
 class SwarmMemberAdmin(SimpleHistoryAdmin):
     list_display = ('hostname', 'status', 'get_swarm_name', 'ip', 'cloud', 'comment', 'id')
-    actions = ['do_create', 'do_set_running', 'do_set_pending', 'do_terminate']
+    actions = ['do_create', 'do_set_running', 'do_set_pending', 'do_terminate', 'do_rebuild']
 
     def do_create(self, request, queryset):
         for member in queryset:
@@ -748,6 +778,11 @@ class SwarmMemberAdmin(SimpleHistoryAdmin):
         for member in queryset:
             member.terminate()
     do_terminate.short_description = "Terminate selected members"
+
+    def do_rebuild(self, request, queryset):
+        for member in queryset:
+            member.rebuild()
+    do_rebuild.short_description = "Rebuild selected members"
 
     def do_set_running(self, request, queryset):
         for member in queryset:
@@ -782,4 +817,310 @@ class SwarmMemberLog(models.Model):
 
 @admin.register(SwarmMemberLog)
 class SwarmMemberLogAdmin(SimpleHistoryAdmin):
-    list_display = ('log_type', 'member', 'timestamp')
+    list_display = ('log_type', 'member', 'timestamp', 'id')
+    exclude = ['resulting_changeset']
+
+
+class MLModelWrapper(models.Model):
+    """
+    Wraps around a deltasherlock.learning.MLModel. Unlike a DeltaSherlockWrapper,
+    the MLModel object is pickled and saved to file instead of in the database
+    """
+    fingerprints = models.ManyToManyField(FingerprintWrapper)
+    labels = models.ManyToManyField(EventLabel, blank=True)
+    file_path = models.CharField(max_length=256)
+    md5_hash = models.CharField(max_length=32)
+    ml_algorithm = models.IntegerField(choices=ML_ALGORITHM_CHOICES, default=0)
+    method = models.IntegerField(choices=FINGERPRINTING_METHOD_CHOICES, default=0)
+
+    @classmethod
+    def generate(cls, fingerprint_wrappers, algorithm, file_path, method = None):
+        mlmw = cls(file_path = file_path)
+
+        unwrapped_fingerprints = []
+        for fpw in fingerprint_wrappers:
+            unwrapped_fingerprints.append(fpw.unwrap())
+
+        mlm = MLModel(unwrapped_fingerprints, MLAlgorithm(algorithm), FingerprintingMethod(method))
+        mlmw.wrap(mlm)
+
+        mlmw.fingerprints.set(fingerprint_wrappers)
+        mlmw.save()
+        return mlmw
+
+    def wrap(self, object_to_wrap):
+        self.ml_algorithm = object_to_wrap.algorithm.value
+        self.method = object_to_wrap.method.value
+
+        with open(self.file_path, "wb") as f:
+            pickle.dump(object_to_wrap, f)
+
+        self.md5_hash = self.__md5(self.file_path)
+        self.save()
+
+        for label_id in set(object_to_wrap.labels):
+            el = EventLabel.objects.get(id=label_id)
+            self.labels.add(el)
+
+        self.save()
+
+    def unwrap(self, verify_hash = False):
+        if verify_hash:
+            assert self.md5_hash == self.__md5(self.file_path)
+        with open(self.file_path, "rb") as f:
+            return pickle.load(f)
+
+    def __md5(self, fname):
+        """
+        Borrowed from https://stackoverflow.com/a/3431838
+        """
+        hash_md5 = md5()
+        with open(fname, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def __str__(self):
+        return "M" + str(self.method) + ":A" + str(self.ml_algorithm) + " with " + str(self.labels.count()) + " labels"
+
+
+class ExperimentResult(models.Model):
+    """
+    Used for research. Represents a single prediction of a single fingerprint
+    """
+    ml_model = models.ForeignKey(MLModelWrapper, models.PROTECT, null=True, blank=True)
+    fingerprint = models.ForeignKey(FingerprintWrapper, models.PROTECT, null=True, blank=True)
+    predictions = models.ManyToManyField(EventLabel, blank=True)
+
+    true_positive_count = models.IntegerField(default=0)
+    true_negative_count = models.IntegerField(default=0)
+    false_positive_count = models.IntegerField(default=0)
+    false_negative_count = models.IntegerField(default=0)
+
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    @classmethod
+    def create(cls, ml_model, fingerprint, predictions):
+        """
+        Generates an ExperimentResult from necessary inputs. Note that parameters
+        are should be in their Django types (i.e. MLModel, FingerprintWrapper), not
+        their "native" deltasherlock base types
+        """
+        er = cls()
+        er.save()
+        er.ml_model = ml_model
+        er.fingerprint = fingerprint
+        er.predictions = predictions
+        er.true_positive_count = len(er.get_true_positives())
+        er.true_negative_count = len(er.get_true_negatives())
+        er.false_positive_count = len(er.get_false_positives())
+        er.false_negative_count = len(er.get_false_negatives())
+        er.save()
+        return er
+
+    def get_true_positives(self):
+        return set(self.fingerprint_names()) & set(self.prediction_names())
+
+    def get_true_negatives(self):
+        return set(set(self.model_label_names()) - set(self.fingerprint_names())) - set(self.prediction_names())
+
+    def get_false_positives(self):
+        return set(self.prediction_names()) - set(self.fingerprint_names())
+
+    def get_false_negatives(self):
+        return set(self.fingerprint_names()) - set(self.prediction_names())
+
+    def fingerprint_names(self):
+        fingerprint_label_names = []
+        for elabel in self.fingerprint.labels.all():
+            fingerprint_label_names.append(elabel.name)
+        return fingerprint_label_names
+
+    def prediction_names(self):
+        prediction_label_names = []
+        for elabel in self.predictions.all():
+            prediction_label_names.append(elabel.name)
+        return prediction_label_names
+
+    def model_label_names(self):
+        model_label_names = []
+        for elabel in self.ml_model.labels.all():
+            model_label_names.append(elabel.name)
+        return model_label_names
+
+    def __str__(self):
+        return str(self.fingerprint_names()) + ":" + str(self.prediction_names())
+
+class Experiment(models.Model):
+    """
+    Used for research. Represents a single experiment, consisting of collections
+    of training and testing fingerprints, a trained model, and a set of
+    ExperimentResults
+    """
+    train_group = MultiSelectField(max_length=255, blank=True, choices=GROUP_CHOICES)
+    test_group = MultiSelectField(max_length=255, blank=True, choices=GROUP_CHOICES)
+
+    train_purpose = MultiSelectField(max_length=255, blank=True, choices=PURPOSE_CHOICES)
+    test_purpose = MultiSelectField(max_length=255, blank=True, choices=PURPOSE_CHOICES)
+
+    train_platform = MultiSelectField(max_length=255, blank=True, choices=PLATFORM_CHOICES)
+    test_platform = MultiSelectField(max_length=255, blank=True, choices=PLATFORM_CHOICES)
+
+    train_cloud = MultiSelectField(max_length=255, blank=True, choices=CLOUD_CHOICES)
+    test_cloud = MultiSelectField(max_length=255, blank=True, choices=CLOUD_CHOICES)
+
+    train_fingerprints = models.ManyToManyField(FingerprintWrapper, related_name="experiment_train_set", blank=True)
+    test_fingerprints = models.ManyToManyField(FingerprintWrapper, related_name="experiment_test_set", blank=True)
+
+    results = models.ManyToManyField(ExperimentResult, blank=True)
+
+    comment = models.TextField(blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    fp_method = models.IntegerField(choices=FINGERPRINTING_METHOD_CHOICES, default=0)
+    ml_algorithm = models.IntegerField(choices=ML_ALGORITHM_CHOICES, default=0)
+    ml_model = models.ForeignKey(MLModelWrapper, models.SET_NULL, null=True, blank=True)
+
+    def gather_fingerprints(self):
+        # Start with filter by FP method
+        tr_fprints = FingerprintWrapper.objects.filter(method=self.fp_method)
+        if len(self.train_group) > 0:
+            tr_fprints = tr_fprints.filter(origin_changeset__labels__group__in=self.train_group)
+        if len(self.train_purpose) > 0:
+            tr_fprints = tr_fprints.filter(origin_changeset__labels__purpose__in=self.train_purpose)
+        if len(self.train_platform) > 0:
+            tr_fprints = tr_fprints.filter(origin_changeset__labels__platform__in=self.train_platform)
+        if len(self.train_cloud) > 0:
+            tr_fprints = tr_fprints.filter(origin_changeset__labels__cloud__in=self.train_cloud)
+
+        ts_fprints = FingerprintWrapper.objects.filter(method=self.fp_method)
+        if len(self.test_group) > 0:
+            ts_fprints = ts_fprints.filter(origin_changeset__labels__group__in=self.test_group)
+        if len(self.test_purpose) > 0:
+            ts_fprints = ts_fprints.filter(origin_changeset__labels__purpose__in=self.test_purpose)
+        if len(self.test_platform) > 0:
+            ts_fprints = ts_fprints.filter(origin_changeset__labels__platform__in=self.test_platform)
+        if len(self.test_cloud) > 0:
+            ts_fprints = ts_fprints.filter(origin_changeset__labels__cloud__in=self.test_cloud)
+
+        self.train_fingerprints.set(tr_fprints, clear=True)
+        self.test_fingerprints.set(ts_fprints, clear=True)
+
+        self.save()
+
+    def generate_ml_model(self, filepath):
+        self.ml_model = MLModelWrapper.generate(self.train_fingerprints.all(), self.ml_algorithm, filepath, self.fp_method)
+        self.save()
+
+    def generate_results(self, clear = True):
+        """
+        Runs the Experiment, saving ExperimentResults as we go. If clear is True,
+        then any prior results are deleted before running the experiment.
+
+        We assume here that all prior steps have been executed successfully. This
+        includes running gather_fingerprints() and generate_ml_model()
+        """
+        mlm = self.ml_model.unwrap()
+
+        if clear:
+            self.results.all().delete()
+
+        for fpw in self.test_fingerprints.all():
+            self.results.add(ExperimentResult.create(self.ml_model, fpw, mlm.predict(fpw.unwrap())))
+
+        self.save()
+
+    def print_analysis(self):
+        """
+        Prints F1 scores, hamming, etc. Run this after generate_results()
+        """
+        actual_labels = 0
+        predictions_made = 0
+        correct_predictions = 0
+        f1_score = 0
+        app_stats = {}
+
+        for er in self.results.all():
+            actual_labels += er.fingerprint.labels.count()
+            predictions_made += er.predictions.count()
+            correct_predictions += er.true_positive_count
+
+            # App Stats
+            for tf_label in er.fingerprint_names():
+                try:
+                    app_stats[tf_label]['true_frequency'] += 1
+                except:
+                    app_stats[tf_label] = {'true_frequency': 1, 'predicted_frequency': 0, 'true_positives': 0, 'true_negatives': 0, 'false_positives': 0, 'false_negatives': 0}
+
+            for pf_label in er.prediction_names():
+                try:
+                    app_stats[pf_label]['predicted_frequency'] += 1
+                except:
+                    app_stats[pf_label] = {'true_frequency': 0, 'predicted_frequency': 1, 'true_positives': 0, 'true_negatives': 0, 'false_positives': 0, 'false_negatives': 0}
+
+            for tp_label in er.get_true_positives():
+                try:
+                    app_stats[tp_label]['true_positives'] += 1
+                except:
+                    app_stats[tp_label] = {'true_frequency': 0, 'predicted_frequency': 0, 'true_positives': 1, 'true_negatives': 0, 'false_positives': 0, 'false_negatives': 0}
+
+            for tn_label in er.get_true_negatives():
+                try:
+                    app_stats[tn_label]['true_negatives'] += 1
+                except:
+                    app_stats[tn_label] = {'true_frequency': 0, 'predicted_frequency': 0, 'true_positives': 0, 'true_negatives': 1, 'false_positives': 0, 'false_negatives': 0}
+
+            for fp_label in er.get_false_positives():
+                try:
+                    app_stats[fp_label]['false_positives'] += 1
+                except:
+                    app_stats[fp_label] = {'true_frequency': 0, 'predicted_frequency': 0, 'true_positives': 0, 'true_negatives': 0, 'false_positives': 1, 'false_negatives': 0}
+
+            for fn_label in er.get_false_negatives():
+                try:
+                    app_stats[fn_label]['false_negatives'] += 1
+                except:
+                    app_stats[fn_label] = {'true_frequency': 0, 'predicted_frequency': 0, 'true_positives': 0, 'true_negatives': 0, 'false_positives': 0, 'false_negatives': 1}
+
+
+        precision = float(correct_predictions) / predictions_made
+        recall = float(correct_predictions) / actual_labels
+
+        if precision + recall > 0:
+            f1_score = 2 * (precision * recall) / (precision + recall)
+
+        hamming = float(correct_predictions) / self.test_fingerprints.count()
+
+        print("Predictions Made: " + str(predictions_made) + " | " )
+        print("Precision: " + str(precision) + " | Recall: " + str(recall))
+        print("F1 Score: " + str(f1_score) + " | Hamming: " + str(hamming))
+
+        return app_stats
+
+
+    def __format_list(self, in_list):
+        if len(in_list) == 0:
+            return "*"
+        elif len(in_list) == 1:
+            return in_list[0]
+        else:
+            return str(in_list)
+
+
+    def get_name(self):
+        train_str = "-".join(map(self.__format_list, [self.train_group, self.train_platform, self.train_purpose]))
+        test_str = "-".join(map(self.__format_list, [self.test_group, self.test_platform, self.test_purpose]))
+        return train_str + ":" + test_str
+    get_name.short_description = "Name"
+
+    def result_count(self):
+        return str(self.results.count())
+
+    def __str__(self):
+        return self.get_name()
+
+
+@admin.register(Experiment)
+class ExperimentAdmin(SimpleHistoryAdmin):
+    list_display = ('id', 'get_name', 'ml_algorithm', 'result_count', 'comment', 'timestamp')
+    exclude = ('train_fingerprints', 'test_fingerprints', 'results')
