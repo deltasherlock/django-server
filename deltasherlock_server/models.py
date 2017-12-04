@@ -1012,10 +1012,12 @@ class Experiment(models.Model):
         self.ml_model = MLModelWrapper.generate(self.train_fingerprints.all(), self.ml_algorithm, filepath, self.fp_method)
         self.save()
 
-    def generate_results(self, clear = True):
+    def generate_results(self, clear = True, override_quantity = None):
         """
         Runs the Experiment, saving ExperimentResults as we go. If clear is True,
-        then any prior results are deleted before running the experiment.
+        then any prior results are deleted before running the experiment. If
+        override_quantity is an integer n, we force the model to give n predictions
+        for each sample
 
         We assume here that all prior steps have been executed successfully. This
         includes running gather_fingerprints() and generate_ml_model()
@@ -1026,7 +1028,10 @@ class Experiment(models.Model):
             self.results.all().delete()
 
         for fpw in self.test_fingerprints.all():
-            self.results.add(ExperimentResult.create(self.ml_model, fpw, mlm.predict(fpw.unwrap())))
+            try:
+                self.results.add(ExperimentResult.create(self.ml_model, fpw, mlm.predict(fpw.unwrap(), override_quantity=override_quantity)))
+            except:
+                print("Skipped " +str(fpw))
 
         self.save()
 
