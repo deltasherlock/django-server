@@ -84,8 +84,7 @@ DATABASES = {
         'USER': 'deltasherlock',
         'PASSWORD': 'FkJ%p770dfHKu9b@FIiM',
         'HOST': 'db.v-m.tech',
-        'PORT': '3306',
-        'OPTIONS': {'max_allowed_packet':1073741824}
+        'PORT': '3306'
     }
 }
 
