@@ -974,6 +974,9 @@ class Experiment(models.Model):
     train_fingerprints = models.ManyToManyField(FingerprintWrapper, related_name="experiment_train_set", blank=True)
     test_fingerprints = models.ManyToManyField(FingerprintWrapper, related_name="experiment_test_set", blank=True)
 
+    train_quantity = models.PositiveSmallIntegerField(null=True, blank=True)
+    test_quantity = models.PositiveSmallIntegerField(null=True, blank=True)
+
     results = models.ManyToManyField(ExperimentResult, blank=True)
 
     comment = models.TextField(blank=True)
@@ -987,23 +990,32 @@ class Experiment(models.Model):
         # Start with filter by FP method
         tr_fprints = FingerprintWrapper.objects.filter(method=self.fp_method)
         if len(self.train_group) > 0:
-            tr_fprints = tr_fprints.filter(origin_changeset__labels__group__in=self.train_group)
+            tr_fprints = tr_fprints.filter(labels__group__in=self.train_group)
         if len(self.train_purpose) > 0:
-            tr_fprints = tr_fprints.filter(origin_changeset__labels__purpose__in=self.train_purpose)
+            tr_fprints = tr_fprints.filter(labels__purpose__in=self.train_purpose)
         if len(self.train_platform) > 0:
-            tr_fprints = tr_fprints.filter(origin_changeset__labels__platform__in=self.train_platform)
+            tr_fprints = tr_fprints.filter(labels__platform__in=self.train_platform)
         if len(self.train_cloud) > 0:
-            tr_fprints = tr_fprints.filter(origin_changeset__labels__cloud__in=self.train_cloud)
+            tr_fprints = tr_fprints.filter(labels__cloud__in=self.train_cloud)
+        if self.train_quantity is not None and self.train_quantity > 0:
+            # Add custom annotation (lookup field) to filter by label count
+            tr_fprints = tr_fprints.annotate(num_labels=models.Count('labels'))
+            tr_fprints = tr_fprints.filter(num_labels=self.train_quantity)
+
 
         ts_fprints = FingerprintWrapper.objects.filter(method=self.fp_method)
         if len(self.test_group) > 0:
-            ts_fprints = ts_fprints.filter(origin_changeset__labels__group__in=self.test_group)
+            ts_fprints = ts_fprints.filter(labels__group__in=self.test_group)
         if len(self.test_purpose) > 0:
-            ts_fprints = ts_fprints.filter(origin_changeset__labels__purpose__in=self.test_purpose)
+            ts_fprints = ts_fprints.filter(labels__purpose__in=self.test_purpose)
         if len(self.test_platform) > 0:
-            ts_fprints = ts_fprints.filter(origin_changeset__labels__platform__in=self.test_platform)
+            ts_fprints = ts_fprints.filter(labels__platform__in=self.test_platform)
         if len(self.test_cloud) > 0:
-            ts_fprints = ts_fprints.filter(origin_changeset__labels__cloud__in=self.test_cloud)
+            ts_fprints = ts_fprints.filter(labels__cloud__in=self.test_cloud)
+        if self.test_quantity is not None and self.test_quantity > 0:
+            # Add custom annotation (lookup field) to filter by label count
+            ts_fprints = ts_fprints.annotate(num_labels=models.Count('labels'))
+            ts_fprints = ts_fprints.filter(num_labels=self.test_quantity)
 
         self.train_fingerprints.set(tr_fprints, clear=True)
         self.test_fingerprints.set(ts_fprints, clear=True)
