@@ -72,7 +72,8 @@ PLATFORM_CHOICES = (
 GROUP_CHOICES = (
     ('RP', 'Repository Packages'),
     ('MI', 'Manual Installations'),
-    ('VD', 'Version Detection')
+    ('VD', 'Version Detection'),
+    ('KS', 'Kitchen Sink')
 )
 PURPOSE_CHOICES = (
     ('TR', 'Training'),
@@ -263,6 +264,7 @@ class DeltaSherlockWrapper(models.Model):
 
         :param object_to_wrap: the Changeset or Fingerprint to be wrapped
         """
+
         self.predicted_quantity = object_to_wrap.predicted_quantity
         self.json_data = DSEncoder().encode(object_to_wrap)
         self.save()
