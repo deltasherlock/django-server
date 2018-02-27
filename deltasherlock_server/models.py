@@ -899,10 +899,12 @@ class ExperimentResult(models.Model):
     false_positive_count = models.IntegerField(default=0)
     false_negative_count = models.IntegerField(default=0)
 
+    partial = models.BooleanField(default=False)
+
     timestamp = models.DateTimeField(auto_now_add=True)
 
     @classmethod
-    def create(cls, ml_model, fingerprint, predictions):
+    def create(cls, ml_model, fingerprint, predictions, partial=False):
         """
         Generates an ExperimentResult from necessary inputs. Note that parameters
         are should be in their Django types (i.e. MLModel, FingerprintWrapper), not
@@ -917,6 +919,7 @@ class ExperimentResult(models.Model):
         er.true_negative_count = len(er.get_true_negatives())
         er.false_positive_count = len(er.get_false_positives())
         er.false_negative_count = len(er.get_false_negatives())
+        er.partial = partial
         er.save()
         return er
 
@@ -935,19 +938,31 @@ class ExperimentResult(models.Model):
     def fingerprint_names(self):
         fingerprint_label_names = []
         for elabel in self.fingerprint.labels.all():
-            fingerprint_label_names.append(elabel.name)
+            if self.partial and elabel.group == 'VD':
+                # Hack to allow partial version detection
+                fingerprint_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+            else:
+                fingerprint_label_names.append(elabel.name)
         return fingerprint_label_names
 
     def prediction_names(self):
         prediction_label_names = []
         for elabel in self.predictions.all():
-            prediction_label_names.append(elabel.name)
+            if self.partial and elabel.group == 'VD':
+                # Hack to allow partial version detection
+                prediction_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+            else:
+                prediction_label_names.append(elabel.name)
         return prediction_label_names
 
     def model_label_names(self):
         model_label_names = []
         for elabel in self.ml_model.labels.all():
-            model_label_names.append(elabel.name)
+            if self.partial and elabel.group == 'VD':
+                # Hack to allow partial version detection
+                model_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+            else:
+                model_label_names.append(elabel.name)
         return model_label_names
 
     def __str__(self):
@@ -1026,7 +1041,7 @@ class Experiment(models.Model):
         self.ml_model = MLModelWrapper.generate(self.train_fingerprints.all(), self.ml_algorithm, filepath, self.fp_method)
         self.save()
 
-    def generate_results(self, clear = True, override_quantity = None):
+    def generate_results(self, clear = True, override_quantity = None, partial = False):
         """
         Runs the Experiment, saving ExperimentResults as we go. If clear is True,
         then any prior results are deleted before running the experiment. If
@@ -1043,7 +1058,7 @@ class Experiment(models.Model):
 
         for fpw in self.test_fingerprints.all():
             try:
-                self.results.add(ExperimentResult.create(self.ml_model, fpw, mlm.predict(fpw.unwrap(), override_quantity=override_quantity)))
+                self.results.add(ExperimentResult.create(self.ml_model, fpw, mlm.predict(fpw.unwrap(), override_quantity=override_quantity), partial=partial))
             except:
                 print("Skipped " +str(fpw))
 
