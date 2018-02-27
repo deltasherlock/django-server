@@ -1075,8 +1075,8 @@ class Experiment(models.Model):
         app_stats = {}
 
         for er in self.results.all():
-            actual_labels += er.fingerprint.labels.count()
-            predictions_made += er.predictions.count()
+            actual_labels += er.fingerprint_names().count()
+            predictions_made += er.prediction_names().count()
             correct_predictions += er.true_positive_count
 
             # App Stats
