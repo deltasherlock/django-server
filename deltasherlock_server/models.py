@@ -950,7 +950,7 @@ class ExperimentResult(models.Model):
         for elabel in self.predictions.all():
             if self.partial and elabel.group == 'VD':
                 # Hack to allow partial version detection
-                prediction_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+                prediction_label_names.append(''.join(i for i in elabel.name if i.isalpha()))
             else:
                 prediction_label_names.append(elabel.name)
         return prediction_label_names
