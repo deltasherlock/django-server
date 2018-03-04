@@ -940,7 +940,7 @@ class ExperimentResult(models.Model):
         for elabel in self.fingerprint.labels.all():
             if self.partial and elabel.group == 'VD':
                 # Hack to allow partial version detection
-                fingerprint_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+                fingerprint_label_names.append(''.join(i for i in elabel.name if i.isalpha()))
             else:
                 fingerprint_label_names.append(elabel.name)
         return fingerprint_label_names
@@ -960,7 +960,7 @@ class ExperimentResult(models.Model):
         for elabel in self.ml_model.labels.all():
             if self.partial and elabel.group == 'VD':
                 # Hack to allow partial version detection
-                model_label_names.append(''.join(i for i in elabel.name if not i.isdigit()))
+                model_label_names.append(''.join(i for i in elabel.name if i.isalpha()))
             else:
                 model_label_names.append(elabel.name)
         return model_label_names
